@@ -15,6 +15,9 @@
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <!-- Babel -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- PapaParse for Reading CSV files -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
     
     <!-- Firebase SDKs -->
     <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-app-compat.js"></script>
@@ -50,12 +53,12 @@
         // ==========================================
         // 파이어베이스 설정값을 아래 객체에 입력하세요.
         const USER_FIREBASE_CONFIG = {
-            // apiKey: "AIzaSyCVG6f1IazVcq7hPc_RYlZAxX8z8ZqN0_k",
-            // authDomain: "jgec-budgets.firebaseapp.com",
-            // projectId: "jgec-budgets",
-            // storageBucket: "jgec-budgets.firebasestorage.app",
-            // messagingSenderId: "624606043611",
-            // appId: "1:624606043611:web:414f3e46ed761caf719bfe"
+            apiKey: "AIzaSyCVG6f1IazVcq7hPc_RYlZAxX8z8ZqN0_k",
+            authDomain: "jgec-budgets.firebaseapp.com",
+            projectId: "jgec-budgets",
+            storageBucket: "jgec-budgets.firebasestorage.app",
+            messagingSenderId: "624606043611",
+            appId: "1:624606043611:web:414f3e46ed761caf719bfe"
         };
 
         // 환경 변수 또는 사용자 설정을 통한 Firebase 초기화 로직
@@ -305,6 +308,69 @@
                 }
             };
 
+            const handleDeleteTransaction = async (transId) => {
+                if (!window.confirm('이 거래 내역을 삭제하고 예산 금액을 되돌리시겠습니까?')) return;
+
+                const transToDelete = transactions.find(t => t.id === transId);
+                if (!transToDelete) return;
+
+                // 취소할 금액들을 계산하여 거꾸로 빼줍니다(-)
+                const budgetUpdates = {};
+                transToDelete.items.forEach(item => {
+                    if (!budgetUpdates[item.budgetId]) {
+                        budgetUpdates[item.budgetId] = { req: 0, enc: 0, exp: 0, amtChange: 0 };
+                    }
+                    if (transToDelete.type === 'requisition') budgetUpdates[item.budgetId].req -= item.amount;
+                    if (transToDelete.type === 'encumbrance') budgetUpdates[item.budgetId].enc -= item.amount;
+                    if (transToDelete.type === 'expenditure') budgetUpdates[item.budgetId].exp -= item.amount;
+                    if (transToDelete.type === 'adjustment') budgetUpdates[item.budgetId].amtChange -= item.amount;
+                });
+
+                if (auth && user) {
+                    const appId = getAppId();
+                    const batch = db.batch();
+                    
+                    // 내역 삭제
+                    const tRef = db.collection('artifacts').doc(appId).collection('users').doc(user.uid).collection(`transactions_${selectedYear}`).doc(transId);
+                    batch.delete(tRef);
+
+                    // 예산 복구
+                    budgets.forEach(b => {
+                        if (budgetUpdates[b.id]) {
+                            const bRef = db.collection('artifacts').doc(appId).collection('users').doc(user.uid).collection(`budgets_${selectedYear}`).doc(b.id);
+                            const updates = budgetUpdates[b.id];
+                            batch.update(bRef, {
+                                requisitioned: (b.requisitioned || 0) + updates.req,
+                                encumbered: (b.encumbered || 0) + updates.enc,
+                                expended: (b.expended || 0) + updates.exp,
+                                amount: (b.amount || 0) + updates.amtChange
+                            });
+                        }
+                    });
+
+                    await batch.commit();
+                } else {
+                    // 로컬 상태 업데이트
+                    let nextBudgets = budgets.map(b => {
+                        if (budgetUpdates[b.id]) {
+                            const u = budgetUpdates[b.id];
+                            return {
+                                ...b,
+                                requisitioned: (b.requisitioned || 0) + u.req,
+                                encumbered: (b.encumbered || 0) + u.enc,
+                                expended: (b.expended || 0) + u.exp,
+                                amount: (b.amount || 0) + u.amtChange
+                            };
+                        }
+                        return b;
+                    });
+                    const nextTrans = transactions.filter(t => t.id !== transId);
+                    setBudgets(nextBudgets);
+                    setTransactions(nextTrans);
+                    saveLocalData(nextBudgets, nextTrans);
+                }
+            };
+
             const printDocument = () => {
                 window.print();
             };
@@ -344,7 +410,7 @@
                         ) : (
                             <>
                                 {activeTab === 'overview' && <OverviewTab budgets={budgets} onTransaction={handleTransaction} onPrint={printDocument} />}
-                                {activeTab === 'history' && <HistoryTab transactions={transactions} budgets={budgets} onPrint={printDocument} />}
+                                {activeTab === 'history' && <HistoryTab transactions={transactions} budgets={budgets} onPrint={printDocument} onDelete={handleDeleteTransaction} />}
                                 {activeTab === 'chart' && <ChartTab transactions={transactions} budgets={budgets} year={selectedYear} />}
                             </>
                         )}
@@ -527,25 +593,210 @@
         const ActionModal = ({ config, budgets, onClose, onConfirm }) => {
             const [date, setDate] = React.useState(config.date);
             const [description, setDescription] = React.useState('');
-            const [items, setItems] = React.useState([{ budgetId: budgets[0]?.id || '', amount: 0, title: '', subTitle: '' }]);
+            const [items, setItems] = React.useState([{ budgetId: '', amount: 0, title: '', subTitle: '' }]);
             
             // File upload simulation state
             const [fileName, setFileName] = React.useState('');
             const [isScanning, setIsScanning] = React.useState(false);
+            const [scanMessage, setScanMessage] = React.useState('');
 
             const handleFileChange = (e) => {
                 const file = e.target.files[0];
-                if (file) {
-                    setFileName(file.name);
-                    setIsScanning(true);
-                    // Simulate PDF processing delay
-                    setTimeout(() => {
-                        setIsScanning(false);
-                        setDescription(`${file.name.replace('.pdf', '')} 내용 반영`);
-                        // Mock auto-fill based on file
-                        setItems([{ budgetId: budgets[0]?.id || '', amount: Math.floor(Math.random() * 500000) + 50000, title: '', subTitle: '' }]);
-                    }, 1500);
-                }
+                if (!file) return;
+
+                setFileName(file.name);
+                setIsScanning(true);
+                setScanMessage('CSV 데이터 분석 중...');
+
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    const csvData = event.target.result;
+                    Papa.parse(csvData, {
+                        complete: (results) => {
+                            const rows = results.data;
+                            let extractedDate = config.date;
+                            let extractedDescription = `${file.name.replace('.csv', '')} 내용 반영`;
+                            let extractedItems = [];
+                            
+                            let isAdjustment = config.type === 'adjustment';
+                            let tableMode = false;
+                            let colIdx = { title: -1, amount: -1, subTitle: -1, parentTitle: -1 };
+                            let tempTotalAmount = 0;
+
+                            // 전체 문서(표 밖)에서 읽어낼 예산 정보 백업
+                            let globalParentTitle = '';
+                            let globalSubTitle = '';
+
+                            // 목 자동 매칭용 정규화 함수 (공백 및 특수문자 제거)
+                            const normalizeStr = (str) => (str || '').replace(/\s+/g, '').replace(/\[.*?\]/g, '').toLowerCase();
+                            
+                            // 부모 예산(세부항목) 이름 가져오기
+                            const getParentTitle = (parentId) => {
+                                const p = budgets.find(b => b.id === parentId);
+                                return p ? normalizeStr(p.title) : '';
+                            };
+
+                            // 점수제 매칭 시스템 (시스템이 자동 작성한 정보들을 교차 검증)
+                            const findMatchingBudget = (csvParentTitle, csvSubTitle, csvTitle, fallbackDesc) => {
+                                const normCsvParent = normalizeStr(csvParentTitle);
+                                const normCsvSub = normalizeStr(csvSubTitle);
+                                const normCsvTitle = normalizeStr(csvTitle);
+                                const normDesc = normalizeStr(fallbackDesc);
+
+                                let bestMatch = null;
+                                let highestScore = 0;
+
+                                budgets.filter(b => b.type === 'item').forEach(b => {
+                                    let score = 0;
+                                    const normBSub = normalizeStr(b.subTitle);
+                                    const normBTitle = normalizeStr(b.title);
+                                    const normBParent = getParentTitle(b.parent);
+
+                                    // 1. 원가통계비목/세목 (SubTitle) 일치 (가장 강력한 시스템 기준)
+                                    if (normCsvSub && normBSub && (normCsvSub.includes(normBSub) || normBSub.includes(normCsvSub))) score += 10;
+                                    
+                                    // 2. 세부항목 (Parent Title) 일치
+                                    if (normCsvParent && normBParent && (normCsvParent.includes(normBParent) || normBParent.includes(normCsvParent))) score += 10;
+
+                                    // 3. 산출내역 (Title) 일치 및 동의어 처리
+                                    if (normCsvTitle) {
+                                        if (normCsvTitle.includes(normBTitle) || normBTitle.includes(normCsvTitle)) score += 5;
+                                        if ((normCsvTitle.includes('임대료') && normBTitle.includes('임차료')) ||
+                                            (normCsvTitle.includes('인건비') && normBTitle.includes('수당'))) score += 5;
+                                    }
+
+                                    // 4. 건명(적요) 일치 (보조 수단)
+                                    if (normDesc && (normDesc.includes(normBTitle) || normBTitle.includes(normDesc))) score += 2;
+
+                                    if (score > highestScore) {
+                                        highestScore = score;
+                                        bestMatch = b;
+                                    }
+                                });
+
+                                // 교차 검증 점수가 10점 이상(최소 목/세부항목 하나는 일치)이어야 자동 매칭 허용
+                                return highestScore >= 10 ? bestMatch : null;
+                            };
+
+                            for (let i = 0; i < rows.length; i++) {
+                                const row = rows[i] || [];
+                                const textRow = row.map(c => typeof c === 'string' ? c.trim() : '');
+                                // 공백 제거 배열 (검색용)
+                                const cleanRow = textRow.map(c => c.replace(/\s+/g, ''));
+
+                                // 1. 제목/건명 추출
+                                const descIdx = Math.max(cleanRow.indexOf('제목'), cleanRow.indexOf('건명'));
+                                if (descIdx !== -1) {
+                                    extractedDescription = textRow[descIdx + 1] || textRow[descIdx + 2] || extractedDescription;
+                                }
+
+                                // 2. 일자 추출 (품의일자, 발의일자, 요구일자 대응)
+                                const dateKeywords = ['품의일자', '발의일자', '요구일자'];
+                                dateKeywords.forEach(kw => {
+                                    const idx = cleanRow.indexOf(kw);
+                                    if (idx !== -1) {
+                                        const dateStr = textRow[idx + 1] || textRow[idx + 2] || '';
+                                        const match = dateStr.match(/(\d{4})[-년]\s*(\d{1,2})[-월]\s*(\d{1,2})/);
+                                        if (match) {
+                                            extractedDate = `${match[1]}-${match[2].padStart(2, '0')}-${match[3].padStart(2, '0')}`;
+                                        }
+                                    }
+                                });
+
+                                // 3. 글로벌 예산 정보 추출 (결의서 등 테이블 바깥 상단에 정보가 있는 경우)
+                                const gParentIdx = cleanRow.indexOf('세부항목');
+                                if (gParentIdx !== -1) globalParentTitle = textRow[gParentIdx + 1] || textRow[gParentIdx + 2] || globalParentTitle;
+                                
+                                const gSubIdx = Math.max(cleanRow.indexOf('원가목'), cleanRow.indexOf('원가통계비목'), cleanRow.indexOf('목'), cleanRow.indexOf('세목'));
+                                if (gSubIdx !== -1) globalSubTitle = textRow[gSubIdx + 1] || textRow[gSubIdx + 2] || globalSubTitle;
+
+                                // 4. 지출결의서용 총액 추출 (예산내역 테이블이 없을 경우 대비)
+                                const amtIdx = cleanRow.indexOf('공급가액');
+                                if (amtIdx !== -1) {
+                                    const val = textRow[amtIdx + 1] || textRow[amtIdx + 2] || '0';
+                                    tempTotalAmount = parseInt(val.replace(/[^0-9]/g, ''), 10) || tempTotalAmount;
+                                }
+
+                                // 5. 예산상세내역 테이블 헤더 감지
+                                if (cleanRow.includes('산출내역')) {
+                                    tableMode = true;
+                                    colIdx.title = cleanRow.indexOf('산출내역');
+                                    colIdx.amount = Math.max(cleanRow.indexOf('품의금액'), cleanRow.indexOf('요구금액'));
+                                    colIdx.subTitle = Math.max(cleanRow.indexOf('원가통계비목'), cleanRow.indexOf('원가목'));
+                                    colIdx.parentTitle = cleanRow.indexOf('세부항목');
+                                    continue;
+                                }
+
+                                // 6. 테이블 데이터 추출
+                                if (tableMode && colIdx.title !== -1 && colIdx.amount !== -1) {
+                                    const amountStr = textRow[colIdx.amount] || '0';
+                                    const amount = parseInt(amountStr.replace(/[^0-9]/g, ''), 10);
+                                    const calcDetail = textRow[colIdx.title] || '';
+                                    
+                                    // 값이 있고, 합계 행이 아닌 경우
+                                    if (amount > 0 && calcDetail && !cleanRow.includes('합계')) {
+                                        // 행(Row)에 정보가 있으면 쓰고, 없으면 글로벌(문서 상단) 정보를 사용
+                                        let rowParentTitle = colIdx.parentTitle !== -1 ? textRow[colIdx.parentTitle] : globalParentTitle;
+                                        let rowSubTitle = colIdx.subTitle !== -1 ? textRow[colIdx.subTitle] : globalSubTitle;
+                                        
+                                        // 품의서처럼 산출내역 칸 안에 '(일반수용비)' 형태로 원가비목이 적힌 경우 추출
+                                        if (!rowSubTitle && calcDetail) {
+                                            const match = calcDetail.match(/\((.*?)\)/);
+                                            if (match) rowSubTitle = match[1];
+                                        }
+
+                                        if (isAdjustment) {
+                                            // 성립전예산: 신규 목 생성
+                                            extractedItems.push({
+                                                budgetId: 'NEW',
+                                                amount: amount,
+                                                title: calcDetail.split('\n')[0].trim(),
+                                                subTitle: rowSubTitle ? rowSubTitle.replace(/\[.*?\]/, '').trim() : ''
+                                            });
+                                        } else {
+                                            // 일반 품의/결의: 기존 예산과 매칭
+                                            const matchedBudget = findMatchingBudget(rowParentTitle, rowSubTitle, calcDetail, extractedDescription);
+                                            extractedItems.push({
+                                                budgetId: matchedBudget ? matchedBudget.id : '',
+                                                amount: amount,
+                                                title: '',
+                                                subTitle: ''
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+
+                            // 7. 예외 처리: 상세 테이블을 찾지 못했지만 '공급가액'은 찾은 경우 (결의서 등)
+                            if (extractedItems.length === 0) {
+                                if (tempTotalAmount > 0) {
+                                    const matchedBudget = findMatchingBudget(globalParentTitle, globalSubTitle, '', extractedDescription);
+                                    extractedItems.push({ 
+                                        budgetId: matchedBudget ? matchedBudget.id : '', 
+                                        amount: tempTotalAmount, 
+                                        title: '', subTitle: '' 
+                                    });
+                                } else {
+                                    extractedItems.push({ budgetId: '', amount: 0, title: '', subTitle: '' });
+                                }
+                            }
+
+                            setDate(extractedDate);
+                            setDescription(extractedDescription);
+                            setItems(extractedItems);
+                            setScanMessage('분석 완료. 내역을 최종 확인하세요.');
+                            setIsScanning(false);
+                        },
+                        error: (error) => {
+                            console.error("CSV 파싱 에러:", error);
+                            setScanMessage('오류 발생: 문서를 읽을 수 없습니다.');
+                            setIsScanning(false);
+                        }
+                    });
+                };
+                
+                // 한국 교육행정 시스템(에듀파인) CSV 파일은 기본적으로 EUC-KR로 인코딩되어 다운로드 됨
+                reader.readAsText(file, 'euc-kr');
             };
 
             const handleSubmit = (e) => {
@@ -575,11 +826,11 @@
 
                         {config.type !== 'adjustment' && (
                             <div className="mb-4 bg-blue-50 p-4 rounded border border-blue-200">
-                                <label className="block text-sm font-bold text-gray-700 mb-2">PDF 파일 업로드 (자동 추출 모의)</label>
-                                <input type="file" accept=".pdf" onChange={handleFileChange} className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-blue-600 file:text-white hover:file:bg-blue-700" />
-                                {isScanning && <p className="text-blue-600 text-sm mt-2 animate-pulse"><i className="fa-solid fa-spinner fa-spin mr-1"></i> 문서 분석 중...</p>}
-                                {fileName && !isScanning && <p className="text-green-600 text-sm mt-2"><i className="fa-solid fa-check mr-1"></i> {fileName} 분석 완료. 아래 내역을 확인 및 수정하세요.</p>}
-                                <p className="text-xs text-gray-500 mt-1">* 주의: 본 시스템은 브라우저 기반으로 실제 완벽한 PDF OCR을 지원하지 않아 수동 확인이 필수입니다.</p>
+                                <label className="block text-sm font-bold text-gray-700 mb-2">CSV 파일 업로드 (에듀파인 품의/결의서)</label>
+                                <input type="file" accept=".csv" onChange={handleFileChange} className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-blue-600 file:text-white hover:file:bg-blue-700" />
+                                {isScanning && <p className="text-blue-600 text-sm mt-2 animate-pulse"><i className="fa-solid fa-spinner fa-spin mr-1"></i> {scanMessage}</p>}
+                                {fileName && !isScanning && <p className="text-green-600 text-sm mt-2"><i className="fa-solid fa-check mr-1"></i> {fileName} {scanMessage}</p>}
+                                <p className="text-xs text-gray-500 mt-1">* 주의: 파일 형식이나 내용에 따라 목이 자동으로 매칭되지 않을 수 있습니다. 반드시 수동으로 확인하세요.</p>
                             </div>
                         )}
 
@@ -641,7 +892,7 @@
                                         )}
                                     </div>
                                 ))}
-                                <button type="button" onClick={() => setItems([...items, {budgetId: budgets[0]?.id || '', amount: 0}])} className="text-sm text-blue-600 hover:underline mt-1">+ 내역 추가</button>
+                                <button type="button" onClick={() => setItems([...items, {budgetId: '', amount: 0}])} className="text-sm text-blue-600 hover:underline mt-1">+ 내역 추가</button>
                             </div>
 
                             <div className="flex justify-end space-x-2 pt-4 border-t">
@@ -657,7 +908,7 @@
         // ==========================================
         // Tab 2: History
         // ==========================================
-        const HistoryTab = ({ transactions, budgets, onPrint }) => {
+        const HistoryTab = ({ transactions, budgets, onPrint, onDelete }) => {
             const [searchTerm, setSearchTerm] = React.useState('');
             const [filterType, setFilterType] = React.useState('all');
 
@@ -726,14 +977,15 @@
                                 <tr>
                                     <th className="w-[12%]">일자</th>
                                     <th className="w-[10%]">구분</th>
-                                    <th className="w-[30%]">적요 (내용)</th>
-                                    <th className="w-[30%]">예산 목</th>
-                                    <th className="w-[18%]">금액</th>
+                                    <th className="w-[25%]">적요 (내용)</th>
+                                    <th className="w-[25%]">예산 목</th>
+                                    <th className="w-[15%]">금액</th>
+                                    <th className="w-[13%]">관리</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {filteredRows.length === 0 ? (
-                                    <tr><td colSpan="5" className="text-center p-8 text-gray-500">기록된 내역이 없습니다.</td></tr>
+                                    <tr><td colSpan="6" className="text-center p-8 text-gray-500">기록된 내역이 없습니다.</td></tr>
                                 ) : (
                                     filteredRows.map((row) => (
                                         <tr key={row.itemId} className="hover:bg-gray-50 border-b">
@@ -741,7 +993,14 @@
                                             {row.isFirstInGroup && <td className="p-3 text-center border-r" rowSpan={row.rowSpan}>{getTypeLabel(row.type)}</td>}
                                             {row.isFirstInGroup && <td className="p-3 border-r" rowSpan={row.rowSpan}>{row.description}</td>}
                                             <td className="p-3 border-r text-gray-700">{getBudgetName(row.budgetId)}</td>
-                                            <td className="p-3 text-right font-mono font-bold">{formatKRW(row.amount)} 원</td>
+                                            <td className="p-3 text-right font-mono font-bold border-r">{formatKRW(row.amount)} 원</td>
+                                            {row.isFirstInGroup && (
+                                                <td className="p-3 text-center" rowSpan={row.rowSpan}>
+                                                    <button onClick={() => onDelete(row.id)} className="text-red-500 hover:bg-red-50 border border-red-500 rounded px-2 py-1 text-xs transition-colors">
+                                                        <i className="fa-solid fa-undo mr-1"></i>되돌리기
+                                                    </button>
+                                                </td>
+                                            )}
                                         </tr>
                                     ))
                                 )}
