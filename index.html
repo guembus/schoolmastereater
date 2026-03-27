@@ -125,11 +125,14 @@
             const [budgets, setBudgets] = React.useState([]);
             const [transactions, setTransactions] = React.useState([]);
             const [loading, setLoading] = React.useState(true);
+            const [dbStatus, setDbStatus] = React.useState('connecting');
+            const [dbErrorMessage, setDbErrorMessage] = React.useState('');
 
             // Auth Effect
             React.useEffect(() => {
                 if (!auth) {
                     setLoading(false);
+                    setDbStatus('local');
                     // Load local mock data if no Firebase
                     initializeLocalData(selectedYear);
                     return;
@@ -144,14 +147,19 @@
                         }
                     } catch (error) {
                         console.error("Auth error:", error);
+                        setDbStatus('error');
+                        setDbErrorMessage('인증 오류: 파이어베이스 콘솔 Authentication > Sign-in method에서 "익명(Anonymous)"을 사용 설정해주세요.');
                         setLoading(false);
+                        initializeLocalData(selectedYear);
                     }
                 };
                 initAuth();
 
                 const unsubscribe = auth.onAuthStateChanged((user) => {
                     setUser(user);
-                    if (!user) setLoading(false);
+                    if (!user) {
+                        setLoading(false);
+                    }
                 });
                 return () => unsubscribe();
             }, []);
@@ -163,6 +171,7 @@
 
                 const appId = getAppId();
                 setLoading(true);
+                setDbStatus('connected');
 
                 // Fetch Budgets for selected year
                 const budgetRef = db.collection('artifacts').doc(appId).collection('users').doc(user.uid).collection(`budgets_${selectedYear}`);
@@ -180,7 +189,11 @@
                         const bData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                         setBudgets(bData.sort((a, b) => parseInt(a.id) - parseInt(b.id)));
                     }
-                }, (error) => console.error("Error fetching budgets:", error));
+                }, (error) => {
+                    console.error("Error fetching budgets:", error);
+                    setDbStatus('error');
+                    setDbErrorMessage('데이터베이스 권한 오류: 파이어베이스 Firestore Database > Rules(규칙)에서 읽기/쓰기를 허용(allow read, write: if true;)해주세요.');
+                });
 
                 // Fetch Transactions for selected year
                 const transRef = db.collection('artifacts').doc(appId).collection('users').doc(user.uid).collection(`transactions_${selectedYear}`);
@@ -190,6 +203,8 @@
                     setLoading(false);
                 }, (error) => {
                     console.error("Error fetching transactions:", error);
+                    setDbStatus('error');
+                    setDbErrorMessage('데이터베이스 권한 오류: 파이어베이스 Firestore Database > Rules(규칙)에서 읽기/쓰기를 허용(allow read, write: if true;)해주세요.');
                     setLoading(false);
                 });
 
@@ -392,6 +407,20 @@
                                         <option key={y} value={y} className="text-black">{y}년 ({y}.3 ~ {y+1}.2)</option>
                                     ))}
                                 </select>
+                            </div>
+
+                            {/* 클라우드 상태 표시기 추가 */}
+                            <div className="flex items-center text-xs ml-4 border border-blue-600 rounded px-2 py-1 bg-blue-900 cursor-help group relative">
+                                {dbStatus === 'connecting' && <span className="text-yellow-300"><i className="fa-solid fa-spinner fa-spin mr-1"></i>연결 확인 중...</span>}
+                                {dbStatus === 'connected' && <span className="text-green-300 font-bold"><i className="fa-solid fa-cloud mr-1"></i>클라우드 정상 작동</span>}
+                                {dbStatus === 'local' && <span className="text-gray-300"><i className="fa-solid fa-hard-drive mr-1"></i>로컬 모드 (저장 불가)</span>}
+                                {dbStatus === 'error' && <span className="text-red-300 font-bold"><i className="fa-solid fa-triangle-exclamation mr-1"></i>클라우드 접근 차단됨</span>}
+                                
+                                {dbStatus === 'error' && (
+                                    <div className="absolute top-full left-0 mt-2 w-80 p-3 bg-white text-red-700 text-sm rounded shadow-2xl hidden group-hover:block z-50 font-bold border-2 border-red-500 whitespace-normal">
+                                        <i className="fa-solid fa-circle-xmark mr-1"></i>{dbErrorMessage}
+                                    </div>
+                                )}
                             </div>
                         </div>
                         <div className="space-x-2">
