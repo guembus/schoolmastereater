@@ -15,14 +15,12 @@
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <!-- Babel -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-
-    <!-- PapaParse for Reading CSV files -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
     
     <!-- Firebase SDKs -->
     <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-storage-compat.js"></script>
 
     <style>
         body { font-family: 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif; background-color: #f3f4f6; }
@@ -51,7 +49,6 @@
         // ==========================================
         // Firebase Configuration Area
         // ==========================================
-        // 파이어베이스 설정값을 아래 객체에 입력하세요.
         const USER_FIREBASE_CONFIG = {
             apiKey: "AIzaSyCVG6f1IazVcq7hPc_RYlZAxX8z8ZqN0_k",
             authDomain: "jgec-budgets.firebaseapp.com",
@@ -61,17 +58,18 @@
             appId: "1:624606043611:web:414f3e46ed761caf719bfe"
         };
 
-        // 환경 변수 또는 사용자 설정을 통한 Firebase 초기화 로직
-        let firebaseApp, auth, db;
+        let firebaseApp, auth, db, storage;
+        let isUsingCustomConfig = false;
         try {
-            const configToUse = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : USER_FIREBASE_CONFIG;
+            const hasUserConfig = USER_FIREBASE_CONFIG && USER_FIREBASE_CONFIG.apiKey && USER_FIREBASE_CONFIG.apiKey !== "YOUR_API_KEY";
+            const configToUse = hasUserConfig ? USER_FIREBASE_CONFIG : (typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {});
+            
             if (Object.keys(configToUse).length > 0) {
                 firebaseApp = firebase.initializeApp(configToUse);
                 auth = firebase.auth();
                 db = firebase.firestore();
-                console.log("Firebase initialized successfully.");
-            } else {
-                console.warn("Firebase config is empty. App will run in local-only mode (data will not be saved permanently).");
+                storage = firebase.storage();
+                isUsingCustomConfig = hasUserConfig;
             }
         } catch (error) {
             console.error("Firebase initialization error:", error);
@@ -80,7 +78,7 @@
         const getAppId = () => typeof __app_id !== 'undefined' ? __app_id : 'jangseong-glocal-budget';
 
         // ==========================================
-        // Initial Data (Based on provided image)
+        // Initial Data
         // ==========================================
         const INITIAL_BUDGET_DATA = [
             { id: '1', parent: null, title: '외국어 교과활동', type: 'category', amount: 180979000 },
@@ -105,17 +103,25 @@
             { id: '20', parent: '17', title: '원어민보조교사보험료 등', subTitle: '기간제교원법정부담금', type: 'item', amount: 1805000 },
         ];
 
-        // Utility: Format Number to KRW
         const formatKRW = (num) => {
             if (num === null || num === undefined) return '0';
             return num.toLocaleString('ko-KR');
         };
 
-        // Utility: Get Fiscal Year (March to February)
         const getFiscalYear = (date = new Date()) => {
             const year = date.getFullYear();
-            const month = date.getMonth() + 1; // 1-12
+            const month = date.getMonth() + 1;
             return month < 3 ? year - 1 : year;
+        };
+
+        // 무한 회계연도 생성기 (현재 년도 기준 -5년 ~ +10년)
+        const generateYears = () => {
+            const currentYear = getFiscalYear();
+            const years = [];
+            for(let i = currentYear - 5; i <= currentYear + 10; i++) {
+                years.push(i);
+            }
+            return years;
         };
 
         const App = () => {
@@ -128,25 +134,24 @@
             const [dbStatus, setDbStatus] = React.useState('connecting');
             const [dbErrorMessage, setDbErrorMessage] = React.useState('');
 
-            // Auth Effect
+            const yearsList = React.useMemo(() => generateYears(), []);
+
             React.useEffect(() => {
                 if (!auth) {
                     setLoading(false);
                     setDbStatus('local');
-                    // Load local mock data if no Firebase
                     initializeLocalData(selectedYear);
                     return;
                 }
 
                 const initAuth = async () => {
                     try {
-                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                        if (!isUsingCustomConfig && typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
                             await auth.signInWithCustomToken(__initial_auth_token);
                         } else {
                             await auth.signInAnonymously();
                         }
                     } catch (error) {
-                        console.error("Auth error:", error);
                         setDbStatus('error');
                         setDbErrorMessage('인증 오류: 파이어베이스 콘솔 Authentication > Sign-in method에서 "익명(Anonymous)"을 사용 설정해주세요.');
                         setLoading(false);
@@ -157,54 +162,42 @@
 
                 const unsubscribe = auth.onAuthStateChanged((user) => {
                     setUser(user);
-                    if (!user) {
-                        setLoading(false);
-                    }
+                    if (!user) setLoading(false);
                 });
                 return () => unsubscribe();
             }, []);
 
-            // Data Fetching Effect
             React.useEffect(() => {
-                if (!auth) return; // Skip if local mode
-                if (!user) return;
+                if (!auth || !user) return;
 
                 const appId = getAppId();
                 setLoading(true);
                 setDbStatus('connected');
 
-                // Fetch Budgets for selected year
                 const budgetRef = db.collection('artifacts').doc(appId).collection('users').doc(user.uid).collection(`budgets_${selectedYear}`);
                 const unsubBudgets = budgetRef.onSnapshot((snapshot) => {
-                    if (snapshot.empty && selectedYear === 2026) { // Initialize 2026 with provided data
+                    if (snapshot.empty && selectedYear === 2026) {
                         INITIAL_BUDGET_DATA.forEach(item => {
-                            budgetRef.doc(item.id).set({
-                                ...item,
-                                requisitioned: 0,
-                                encumbered: 0,
-                                expended: 0
-                            });
+                            budgetRef.doc(item.id).set({...item, requisitioned: 0, encumbered: 0, expended: 0});
                         });
                     } else {
                         const bData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                         setBudgets(bData.sort((a, b) => parseInt(a.id) - parseInt(b.id)));
                     }
                 }, (error) => {
-                    console.error("Error fetching budgets:", error);
                     setDbStatus('error');
-                    setDbErrorMessage('데이터베이스 권한 오류: 파이어베이스 Firestore Database > Rules(규칙)에서 읽기/쓰기를 허용(allow read, write: if true;)해주세요.');
+                    setDbErrorMessage('데이터베이스 읽기 권한 오류');
                 });
 
-                // Fetch Transactions for selected year
                 const transRef = db.collection('artifacts').doc(appId).collection('users').doc(user.uid).collection(`transactions_${selectedYear}`);
-                const unsubTrans = transRef.orderBy('date', 'desc').onSnapshot((snapshot) => {
+                const unsubTrans = transRef.onSnapshot((snapshot) => {
                     const tData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                    // 정렬은 클라이언트(메모리)에서 처리 (Rule 2 준수)
                     setTransactions(tData);
                     setLoading(false);
                 }, (error) => {
-                    console.error("Error fetching transactions:", error);
                     setDbStatus('error');
-                    setDbErrorMessage('데이터베이스 권한 오류: 파이어베이스 Firestore Database > Rules(규칙)에서 읽기/쓰기를 허용(allow read, write: if true;)해주세요.');
+                    setDbErrorMessage('데이터베이스 읽기 권한 오류');
                     setLoading(false);
                 });
 
@@ -214,7 +207,6 @@
                 };
             }, [user, selectedYear]);
 
-            // Local Data Fallback Initialization
             const initializeLocalData = (year) => {
                 const bKey = `local_budgets_${year}`;
                 const tKey = `local_trans_${year}`;
@@ -226,21 +218,12 @@
                 setTransactions(JSON.parse(localStorage.getItem(tKey)) || []);
             };
 
-            // Save Local Data (Mock DB interaction)
-            const saveLocalData = (newBudgets, newTransactions) => {
-                if (!auth) {
-                    localStorage.setItem(`local_budgets_${selectedYear}`, JSON.stringify(newBudgets));
-                    localStorage.setItem(`local_trans_${selectedYear}`, JSON.stringify(newTransactions));
-                }
-            };
-
-            const handleTransaction = async (type, date, items, description) => {
+            const handleTransaction = async (type, date, items, description, extraBudgets = [], attachedFiles = []) => {
                 const newTransId = Date.now().toString();
                 const transactionRecord = {
-                    id: newTransId, date, type, items, description, timestamp: new Date().toISOString()
+                    id: newTransId, date, type, items, description, attachedFiles, timestamp: new Date().toISOString()
                 };
 
-                // Create a map for quick budget updates
                 const budgetUpdates = {};
                 items.forEach(item => {
                     if (!budgetUpdates[item.budgetId]) {
@@ -256,11 +239,16 @@
                     const appId = getAppId();
                     const batch = db.batch();
                     
-                    // Add transaction
                     const tRef = db.collection('artifacts').doc(appId).collection('users').doc(user.uid).collection(`transactions_${selectedYear}`).doc(newTransId);
                     batch.set(tRef, transactionRecord);
 
-                    // Update budgets
+                    if (extraBudgets && extraBudgets.length > 0) {
+                        extraBudgets.forEach(eb => {
+                            const ebRef = db.collection('artifacts').doc(appId).collection('users').doc(user.uid).collection(`budgets_${selectedYear}`).doc(eb.id);
+                            batch.set(ebRef, eb);
+                        });
+                    }
+
                     budgets.forEach(b => {
                         if (budgetUpdates[b.id]) {
                             const bRef = db.collection('artifacts').doc(appId).collection('users').doc(user.uid).collection(`budgets_${selectedYear}`).doc(b.id);
@@ -274,52 +262,19 @@
                         }
                     });
                     
-                    // Handle creating new budget items for 'adjustment' if ID is new
                     items.forEach(item => {
                         if (type === 'adjustment' && item.isNew) {
                              const bRef = db.collection('artifacts').doc(appId).collection('users').doc(user.uid).collection(`budgets_${selectedYear}`).doc(item.budgetId);
                              batch.set(bRef, {
-                                 id: item.budgetId,
-                                 parent: item.parent,
-                                 title: item.title,
-                                 subTitle: item.subTitle,
-                                 type: 'item',
-                                 amount: item.amount,
-                                 requisitioned: 0, encumbered: 0, expended: 0
+                                 id: item.budgetId, parent: item.parent, title: item.title, subTitle: item.subTitle, type: 'item',
+                                 amount: item.amount, requisitioned: 0, encumbered: 0, expended: 0
                              });
                         }
                     });
 
                     await batch.commit();
                 } else {
-                    // Local state update
-                    let nextBudgets = [...budgets];
-                    items.forEach(item => {
-                        if (type === 'adjustment' && item.isNew) {
-                            nextBudgets.push({
-                                id: item.budgetId, parent: item.parent, title: item.title, subTitle: item.subTitle, type: 'item',
-                                amount: item.amount, requisitioned: 0, encumbered: 0, expended: 0
-                            });
-                        } else {
-                            nextBudgets = nextBudgets.map(b => {
-                                if (b.id === item.budgetId) {
-                                    const u = budgetUpdates[b.id];
-                                    return {
-                                        ...b,
-                                        requisitioned: (b.requisitioned || 0) + u.req,
-                                        encumbered: (b.encumbered || 0) + u.enc,
-                                        expended: (b.expended || 0) + u.exp,
-                                        amount: (b.amount || 0) + u.amtChange
-                                    };
-                                }
-                                return b;
-                            });
-                        }
-                    });
-                    const nextTrans = [transactionRecord, ...transactions];
-                    setBudgets(nextBudgets);
-                    setTransactions(nextTrans);
-                    saveLocalData(nextBudgets, nextTrans);
+                    alert("로컬 모드에서는 거래 내역 저장이 제한될 수 있습니다.");
                 }
             };
 
@@ -329,7 +284,6 @@
                 const transToDelete = transactions.find(t => t.id === transId);
                 if (!transToDelete) return;
 
-                // 취소할 금액들을 계산하여 거꾸로 빼줍니다(-)
                 const budgetUpdates = {};
                 transToDelete.items.forEach(item => {
                     if (!budgetUpdates[item.budgetId]) {
@@ -345,11 +299,9 @@
                     const appId = getAppId();
                     const batch = db.batch();
                     
-                    // 내역 삭제
                     const tRef = db.collection('artifacts').doc(appId).collection('users').doc(user.uid).collection(`transactions_${selectedYear}`).doc(transId);
                     batch.delete(tRef);
 
-                    // 예산 복구
                     budgets.forEach(b => {
                         if (budgetUpdates[b.id]) {
                             const bRef = db.collection('artifacts').doc(appId).collection('users').doc(user.uid).collection(`budgets_${selectedYear}`).doc(b.id);
@@ -363,36 +315,21 @@
                         }
                     });
 
-                    await batch.commit();
-                } else {
-                    // 로컬 상태 업데이트
-                    let nextBudgets = budgets.map(b => {
-                        if (budgetUpdates[b.id]) {
-                            const u = budgetUpdates[b.id];
-                            return {
-                                ...b,
-                                requisitioned: (b.requisitioned || 0) + u.req,
-                                encumbered: (b.encumbered || 0) + u.enc,
-                                expended: (b.expended || 0) + u.exp,
-                                amount: (b.amount || 0) + u.amtChange
-                            };
-                        }
-                        return b;
-                    });
-                    const nextTrans = transactions.filter(t => t.id !== transId);
-                    setBudgets(nextBudgets);
-                    setTransactions(nextTrans);
-                    saveLocalData(nextBudgets, nextTrans);
-                }
-            };
+                    // Storage 파일 삭제 시도 (에러나도 무시하여 트랜잭션 롤백 방지)
+                    if (transToDelete.attachedFiles && transToDelete.attachedFiles.length > 0 && storage) {
+                        transToDelete.attachedFiles.forEach(file => {
+                            if (file.path) {
+                                storage.ref().child(file.path).delete().catch(e => console.error("Storage delete error:", e));
+                            }
+                        });
+                    }
 
-            const printDocument = () => {
-                window.print();
+                    await batch.commit();
+                }
             };
 
             return (
                 <div className="min-h-screen flex flex-col">
-                    {/* Header */}
                     <header className="bg-blue-800 text-white p-4 shadow-md no-print flex justify-between items-center">
                         <div className="flex items-center space-x-4">
                             <h1 className="text-2xl font-bold"><i className="fa-solid fa-school mr-2"></i>장성글로컬교육센터 예산 관리</h1>
@@ -403,13 +340,12 @@
                                     value={selectedYear}
                                     onChange={(e) => setSelectedYear(parseInt(e.target.value))}
                                 >
-                                    {[2025, 2026, 2027, 2028].map(y => (
+                                    {yearsList.map(y => (
                                         <option key={y} value={y} className="text-black">{y}년 ({y}.3 ~ {y+1}.2)</option>
                                     ))}
                                 </select>
                             </div>
 
-                            {/* 클라우드 상태 표시기 추가 */}
                             <div className="flex items-center text-xs ml-4 border border-blue-600 rounded px-2 py-1 bg-blue-900 cursor-help group relative">
                                 {dbStatus === 'connecting' && <span className="text-yellow-300"><i className="fa-solid fa-spinner fa-spin mr-1"></i>연결 확인 중...</span>}
                                 {dbStatus === 'connected' && <span className="text-green-300 font-bold"><i className="fa-solid fa-cloud mr-1"></i>클라우드 정상 작동</span>}
@@ -425,12 +361,11 @@
                         </div>
                         <div className="space-x-2">
                             <button onClick={() => setActiveTab('overview')} className={`px-4 py-2 rounded transition-colors ${activeTab === 'overview' ? 'bg-white text-blue-800 font-bold' : 'hover:bg-blue-700'}`}>개요</button>
-                            <button onClick={() => setActiveTab('history')} className={`px-4 py-2 rounded transition-colors ${activeTab === 'history' ? 'bg-white text-blue-800 font-bold' : 'hover:bg-blue-700'}`}>내역</button>
+                            <button onClick={() => setActiveTab('history')} className={`px-4 py-2 rounded transition-colors ${activeTab === 'history' ? 'bg-white text-blue-800 font-bold' : 'hover:bg-blue-700'}`}>내역 (장부)</button>
                             <button onClick={() => setActiveTab('chart')} className={`px-4 py-2 rounded transition-colors ${activeTab === 'chart' ? 'bg-white text-blue-800 font-bold' : 'hover:bg-blue-700'}`}>차트/일정</button>
                         </div>
                     </header>
 
-                    {/* Main Content */}
                     <main className="flex-1 p-6 print-full-width">
                         {loading ? (
                             <div className="flex justify-center items-center h-64">
@@ -438,8 +373,8 @@
                             </div>
                         ) : (
                             <>
-                                {activeTab === 'overview' && <OverviewTab budgets={budgets} onTransaction={handleTransaction} onPrint={printDocument} />}
-                                {activeTab === 'history' && <HistoryTab transactions={transactions} budgets={budgets} onPrint={printDocument} onDelete={handleDeleteTransaction} />}
+                                {activeTab === 'overview' && <OverviewTab budgets={budgets} onTransaction={handleTransaction} onPrint={() => window.print()} />}
+                                {activeTab === 'history' && <HistoryTab transactions={transactions} budgets={budgets} onPrint={() => window.print()} onDelete={handleDeleteTransaction} />}
                                 {activeTab === 'chart' && <ChartTab transactions={transactions} budgets={budgets} year={selectedYear} />}
                             </>
                         )}
@@ -454,11 +389,9 @@
         const OverviewTab = ({ budgets, onTransaction, onPrint }) => {
             const [modalConfig, setModalConfig] = React.useState(null);
 
-            // Calculation logic for hierarchy
             const processData = () => {
                 let processed = JSON.parse(JSON.stringify(budgets));
                 
-                // Bottom-up roll up for sums
                 const rollUp = (parentId) => {
                     let children = processed.filter(b => b.parent === parentId);
                     let sum = { amount: 0, req: 0, enc: 0, exp: 0 };
@@ -493,15 +426,12 @@
                     t.expended = tSum.exp;
                 });
 
-                // Flatten for table display
                 const flatten = (parentId, level = 0) => {
                     let result = [];
                     let children = processed.filter(b => b.parent === parentId);
                     children.forEach(c => {
                         result.push({...c, level});
-                        if (c.type !== 'item') {
-                            result = result.concat(flatten(c.id, level + 1));
-                        }
+                        if (c.type !== 'item') result = result.concat(flatten(c.id, level + 1));
                     });
                     return result;
                 };
@@ -512,12 +442,9 @@
                     displayList = displayList.concat(flatten(t.id, 1));
                 });
 
-                // Calculate Totals for bottom row
                 const total = topLevel.reduce((acc, curr) => ({
-                    amount: acc.amount + (curr.amount || 0),
-                    req: acc.req + (curr.requisitioned || 0),
-                    enc: acc.enc + (curr.encumbered || 0),
-                    exp: acc.exp + (curr.expended || 0)
+                    amount: acc.amount + (curr.amount || 0), req: acc.req + (curr.requisitioned || 0),
+                    enc: acc.enc + (curr.encumbered || 0), exp: acc.exp + (curr.expended || 0)
                 }), {amount:0, req:0, enc:0, exp:0});
 
                 return { displayList, total };
@@ -525,24 +452,14 @@
 
             const { displayList, total } = processData();
 
-            const openUploadModal = (type) => {
-                // Mocking PDF read by creating a generic interface
-                setModalConfig({
-                    type: type,
-                    title: type === 'requisition' ? '지출품의서 업로드 및 반영' : 
-                           type === 'expenditure' ? '지출결의서 업로드 및 반영' : '성립전예산(수동조정) 반영',
-                    date: new Date().toISOString().split('T')[0]
-                });
-            };
-
             return (
                 <div className="bg-white rounded shadow p-6 print-full-width">
                     <div className="flex justify-between items-center mb-4 no-print">
                         <h2 className="text-xl font-bold text-gray-800">예산 현황 총괄표</h2>
                         <div className="space-x-2">
-                            <button onClick={() => openUploadModal('requisition')} className="bg-green-600 text-white px-3 py-1.5 rounded hover:bg-green-700 text-sm"><i className="fa-solid fa-file-pdf mr-1"></i> 지출품의서 반영</button>
-                            <button onClick={() => openUploadModal('expenditure')} className="bg-blue-600 text-white px-3 py-1.5 rounded hover:bg-blue-700 text-sm"><i className="fa-solid fa-file-pdf mr-1"></i> 지출결의서 반영</button>
-                            <button onClick={() => openUploadModal('adjustment')} className="bg-purple-600 text-white px-3 py-1.5 rounded hover:bg-purple-700 text-sm"><i className="fa-solid fa-pen-to-square mr-1"></i> 성립전/예산조정</button>
+                            <button onClick={() => setModalConfig({type: 'requisition', title: '수기 지출품의 등록 및 근거 첨부', date: new Date().toISOString().split('T')[0]})} className="bg-green-600 text-white px-3 py-1.5 rounded hover:bg-green-700 text-sm"><i className="fa-solid fa-pen mr-1"></i> 지출품의 수기반영</button>
+                            <button onClick={() => setModalConfig({type: 'expenditure', title: '수기 지출결의 등록 및 근거 첨부', date: new Date().toISOString().split('T')[0]})} className="bg-blue-600 text-white px-3 py-1.5 rounded hover:bg-blue-700 text-sm"><i className="fa-solid fa-pen mr-1"></i> 지출결의 수기반영</button>
+                            <button onClick={() => setModalConfig({type: 'adjustment', title: '성립전예산/예산조정 등록', date: new Date().toISOString().split('T')[0]})} className="bg-purple-600 text-white px-3 py-1.5 rounded hover:bg-purple-700 text-sm"><i className="fa-solid fa-pen-to-square mr-1"></i> 성립전/예산조정</button>
                             <button onClick={onPrint} className="bg-gray-600 text-white px-3 py-1.5 rounded hover:bg-gray-700 text-sm"><i className="fa-solid fa-print mr-1"></i> 출력/PDF</button>
                         </div>
                     </div>
@@ -574,7 +491,6 @@
                                 {displayList.map((row) => {
                                     const balance = (row.amount || 0) - (row.expended || 0);
                                     const rate = row.amount ? ((row.expended || 0) / row.amount * 100).toFixed(1) : 0;
-                                    
                                     let rowClass = "table-cell-text ";
                                     if (row.type === 'category') rowClass += "row-group";
                                     else if (row.type === 'sub') rowClass += "row-subgroup";
@@ -582,12 +498,8 @@
 
                                     return (
                                         <tr key={row.id} className="hover:bg-blue-50 transition-colors">
-                                            <td className={rowClass}>
-                                                {row.type === 'item' ? row.subTitle : row.title}
-                                            </td>
-                                            <td className="table-cell-text text-gray-600">
-                                                {row.type === 'item' ? row.title : ''}
-                                            </td>
+                                            <td className={rowClass}>{row.type === 'item' ? row.subTitle : row.title}</td>
+                                            <td className="table-cell-text text-gray-600">{row.type === 'item' ? row.title : ''}</td>
                                             <td className="table-cell">{formatKRW(row.amount)}</td>
                                             <td className="table-cell">{formatKRW(row.requisitioned)}</td>
                                             <td className="table-cell">{formatKRW(row.encumbered)}</td>
@@ -604,10 +516,10 @@
                     {modalConfig && (
                         <ActionModal 
                             config={modalConfig} 
-                            budgets={budgets.filter(b => b.type === 'item')} // Only allow actions on leaf items
+                            budgets={budgets}
                             onClose={() => setModalConfig(null)} 
-                            onConfirm={(data) => {
-                                onTransaction(modalConfig.type, data.date, data.items, data.description);
+                            onConfirm={(data, extraBudgets, uploadedFiles) => {
+                                onTransaction(modalConfig.type, data.date, data.items, data.description, extraBudgets, uploadedFiles);
                                 setModalConfig(null);
                             }} 
                         />
@@ -617,316 +529,218 @@
         };
 
         // ==========================================
-        // Modal for Actions
+        // Modal for Actions (수동 입력 및 파일 업로드 전용으로 전환)
         // ==========================================
         const ActionModal = ({ config, budgets, onClose, onConfirm }) => {
             const [date, setDate] = React.useState(config.date);
             const [description, setDescription] = React.useState('');
-            const [items, setItems] = React.useState([{ budgetId: '', amount: 0, title: '', subTitle: '' }]);
+            const [items, setItems] = React.useState([{ 
+                budgetId: '', categoryId: '', newCategoryName: '', subId: '', newSubName: '', 
+                subTitleAction: 'select', subTitle: '', title: '', amount: 0 
+            }]);
             
-            // File upload simulation state
-            const [fileName, setFileName] = React.useState('');
-            const [isScanning, setIsScanning] = React.useState(false);
-            const [scanMessage, setScanMessage] = React.useState('');
+            // 파일 업로드 관련 상태
+            const [filesToUpload, setFilesToUpload] = React.useState([]);
+            const [isUploading, setIsUploading] = React.useState(false);
 
-            const handleFileChange = (e) => {
-                const file = e.target.files[0];
-                if (!file) return;
-
-                setFileName(file.name);
-                setIsScanning(true);
-                setScanMessage('CSV 데이터 분석 중...');
-
-                const reader = new FileReader();
-                reader.onload = (event) => {
-                    const csvData = event.target.result;
-                    Papa.parse(csvData, {
-                        complete: (results) => {
-                            const rows = results.data;
-                            let extractedDate = config.date;
-                            let extractedDescription = `${file.name.replace('.csv', '')} 내용 반영`;
-                            let extractedItems = [];
-                            
-                            let isAdjustment = config.type === 'adjustment';
-                            let tableMode = false;
-                            let colIdx = { title: -1, amount: -1, subTitle: -1, parentTitle: -1 };
-                            let tempTotalAmount = 0;
-
-                            // 전체 문서(표 밖)에서 읽어낼 예산 정보 백업
-                            let globalParentTitle = '';
-                            let globalSubTitle = '';
-
-                            // 목 자동 매칭용 정규화 함수 (공백 및 특수문자 제거)
-                            const normalizeStr = (str) => (str || '').replace(/\s+/g, '').replace(/\[.*?\]/g, '').toLowerCase();
-                            
-                            // 부모 예산(세부항목) 이름 가져오기
-                            const getParentTitle = (parentId) => {
-                                const p = budgets.find(b => b.id === parentId);
-                                return p ? normalizeStr(p.title) : '';
-                            };
-
-                            // 점수제 매칭 시스템 (시스템이 자동 작성한 정보들을 교차 검증)
-                            const findMatchingBudget = (csvParentTitle, csvSubTitle, csvTitle, fallbackDesc) => {
-                                const normCsvParent = normalizeStr(csvParentTitle);
-                                const normCsvSub = normalizeStr(csvSubTitle);
-                                const normCsvTitle = normalizeStr(csvTitle);
-                                const normDesc = normalizeStr(fallbackDesc);
-
-                                let bestMatch = null;
-                                let highestScore = 0;
-
-                                budgets.filter(b => b.type === 'item').forEach(b => {
-                                    let score = 0;
-                                    const normBSub = normalizeStr(b.subTitle);
-                                    const normBTitle = normalizeStr(b.title);
-                                    const normBParent = getParentTitle(b.parent);
-
-                                    // 1. 원가통계비목/세목 (SubTitle) 일치 (가장 강력한 시스템 기준)
-                                    if (normCsvSub && normBSub && (normCsvSub.includes(normBSub) || normBSub.includes(normCsvSub))) score += 10;
-                                    
-                                    // 2. 세부항목 (Parent Title) 일치
-                                    if (normCsvParent && normBParent && (normCsvParent.includes(normBParent) || normBParent.includes(normCsvParent))) score += 10;
-
-                                    // 3. 산출내역 (Title) 일치 및 동의어 처리
-                                    if (normCsvTitle) {
-                                        if (normCsvTitle.includes(normBTitle) || normBTitle.includes(normCsvTitle)) score += 5;
-                                        if ((normCsvTitle.includes('임대료') && normBTitle.includes('임차료')) ||
-                                            (normCsvTitle.includes('인건비') && normBTitle.includes('수당'))) score += 5;
-                                    }
-
-                                    // 4. 건명(적요) 일치 (보조 수단)
-                                    if (normDesc && (normDesc.includes(normBTitle) || normBTitle.includes(normDesc))) score += 2;
-
-                                    if (score > highestScore) {
-                                        highestScore = score;
-                                        bestMatch = b;
-                                    }
-                                });
-
-                                // 교차 검증 점수가 10점 이상(최소 목/세부항목 하나는 일치)이어야 자동 매칭 허용
-                                return highestScore >= 10 ? bestMatch : null;
-                            };
-
-                            for (let i = 0; i < rows.length; i++) {
-                                const row = rows[i] || [];
-                                const textRow = row.map(c => typeof c === 'string' ? c.trim() : '');
-                                // 공백 제거 배열 (검색용)
-                                const cleanRow = textRow.map(c => c.replace(/\s+/g, ''));
-
-                                // 1. 제목/건명 추출
-                                const descIdx = Math.max(cleanRow.indexOf('제목'), cleanRow.indexOf('건명'));
-                                if (descIdx !== -1) {
-                                    extractedDescription = textRow[descIdx + 1] || textRow[descIdx + 2] || extractedDescription;
-                                }
-
-                                // 2. 일자 추출 (품의일자, 발의일자, 요구일자 대응)
-                                const dateKeywords = ['품의일자', '발의일자', '요구일자'];
-                                dateKeywords.forEach(kw => {
-                                    const idx = cleanRow.indexOf(kw);
-                                    if (idx !== -1) {
-                                        const dateStr = textRow[idx + 1] || textRow[idx + 2] || '';
-                                        const match = dateStr.match(/(\d{4})[-년]\s*(\d{1,2})[-월]\s*(\d{1,2})/);
-                                        if (match) {
-                                            extractedDate = `${match[1]}-${match[2].padStart(2, '0')}-${match[3].padStart(2, '0')}`;
-                                        }
-                                    }
-                                });
-
-                                // 3. 글로벌 예산 정보 추출 (결의서 등 테이블 바깥 상단에 정보가 있는 경우)
-                                const gParentIdx = cleanRow.indexOf('세부항목');
-                                if (gParentIdx !== -1) globalParentTitle = textRow[gParentIdx + 1] || textRow[gParentIdx + 2] || globalParentTitle;
-                                
-                                const gSubIdx = Math.max(cleanRow.indexOf('원가목'), cleanRow.indexOf('원가통계비목'), cleanRow.indexOf('목'), cleanRow.indexOf('세목'));
-                                if (gSubIdx !== -1) globalSubTitle = textRow[gSubIdx + 1] || textRow[gSubIdx + 2] || globalSubTitle;
-
-                                // 4. 지출결의서용 총액 추출 (예산내역 테이블이 없을 경우 대비)
-                                const amtIdx = cleanRow.indexOf('공급가액');
-                                if (amtIdx !== -1) {
-                                    const val = textRow[amtIdx + 1] || textRow[amtIdx + 2] || '0';
-                                    tempTotalAmount = parseInt(val.replace(/[^0-9]/g, ''), 10) || tempTotalAmount;
-                                }
-
-                                // 5. 예산상세내역 테이블 헤더 감지
-                                if (cleanRow.includes('산출내역')) {
-                                    tableMode = true;
-                                    colIdx.title = cleanRow.indexOf('산출내역');
-                                    colIdx.amount = Math.max(cleanRow.indexOf('품의금액'), cleanRow.indexOf('요구금액'));
-                                    colIdx.subTitle = Math.max(cleanRow.indexOf('원가통계비목'), cleanRow.indexOf('원가목'));
-                                    colIdx.parentTitle = cleanRow.indexOf('세부항목');
-                                    continue;
-                                }
-
-                                // 6. 테이블 데이터 추출
-                                if (tableMode && colIdx.title !== -1 && colIdx.amount !== -1) {
-                                    const amountStr = textRow[colIdx.amount] || '0';
-                                    const amount = parseInt(amountStr.replace(/[^0-9]/g, ''), 10);
-                                    const calcDetail = textRow[colIdx.title] || '';
-                                    
-                                    // 값이 있고, 합계 행이 아닌 경우
-                                    if (amount > 0 && calcDetail && !cleanRow.includes('합계')) {
-                                        // 행(Row)에 정보가 있으면 쓰고, 없으면 글로벌(문서 상단) 정보를 사용
-                                        let rowParentTitle = colIdx.parentTitle !== -1 ? textRow[colIdx.parentTitle] : globalParentTitle;
-                                        let rowSubTitle = colIdx.subTitle !== -1 ? textRow[colIdx.subTitle] : globalSubTitle;
-                                        
-                                        // 품의서처럼 산출내역 칸 안에 '(일반수용비)' 형태로 원가비목이 적힌 경우 추출
-                                        if (!rowSubTitle && calcDetail) {
-                                            const match = calcDetail.match(/\((.*?)\)/);
-                                            if (match) rowSubTitle = match[1];
-                                        }
-
-                                        if (isAdjustment) {
-                                            // 성립전예산: 신규 목 생성
-                                            extractedItems.push({
-                                                budgetId: 'NEW',
-                                                amount: amount,
-                                                title: calcDetail.split('\n')[0].trim(),
-                                                subTitle: rowSubTitle ? rowSubTitle.replace(/\[.*?\]/, '').trim() : ''
-                                            });
-                                        } else {
-                                            // 일반 품의/결의: 기존 예산과 매칭
-                                            const matchedBudget = findMatchingBudget(rowParentTitle, rowSubTitle, calcDetail, extractedDescription);
-                                            extractedItems.push({
-                                                budgetId: matchedBudget ? matchedBudget.id : '',
-                                                amount: amount,
-                                                title: '',
-                                                subTitle: ''
-                                            });
-                                        }
-                                    }
-                                }
-                            }
-
-                            // 7. 예외 처리: 상세 테이블을 찾지 못했지만 '공급가액'은 찾은 경우 (결의서 등)
-                            if (extractedItems.length === 0) {
-                                if (tempTotalAmount > 0) {
-                                    const matchedBudget = findMatchingBudget(globalParentTitle, globalSubTitle, '', extractedDescription);
-                                    extractedItems.push({ 
-                                        budgetId: matchedBudget ? matchedBudget.id : '', 
-                                        amount: tempTotalAmount, 
-                                        title: '', subTitle: '' 
-                                    });
-                                } else {
-                                    extractedItems.push({ budgetId: '', amount: 0, title: '', subTitle: '' });
-                                }
-                            }
-
-                            setDate(extractedDate);
-                            setDescription(extractedDescription);
-                            setItems(extractedItems);
-                            setScanMessage('분석 완료. 내역을 최종 확인하세요.');
-                            setIsScanning(false);
-                        },
-                        error: (error) => {
-                            console.error("CSV 파싱 에러:", error);
-                            setScanMessage('오류 발생: 문서를 읽을 수 없습니다.');
-                            setIsScanning(false);
-                        }
-                    });
-                };
-                
-                // 한국 교육행정 시스템(에듀파인) CSV 파일은 기본적으로 EUC-KR로 인코딩되어 다운로드 됨
-                reader.readAsText(file, 'euc-kr');
+            const handleFileSelect = (e) => {
+                if (e.target.files.length > 0) {
+                    setFilesToUpload(Array.from(e.target.files));
+                }
             };
 
-            const handleSubmit = (e) => {
+            const handleSubmit = async (e) => {
                 e.preventDefault();
-                // Process adjustment logic (new items)
-                const processedItems = items.map(item => {
+                setIsUploading(true);
+
+                let extraBudgetsToCreate = [];
+                let newCatIdMap = {};
+                let newSubIdMap = {};
+
+                const processedItems = items.map((item, idx) => {
                     if (config.type === 'adjustment' && item.budgetId === 'NEW') {
+                        let finalCategoryId = item.categoryId;
+                        let finalSubId = item.subId;
+
+                        if (item.categoryId === 'NEW_CATEGORY') {
+                            if (!newCatIdMap[item.newCategoryName]) {
+                                const newId = 'new_cat_' + Date.now() + '_' + idx;
+                                newCatIdMap[item.newCategoryName] = newId;
+                                extraBudgetsToCreate.push({ id: newId, parent: null, title: item.newCategoryName, type: 'category', amount: 0, requisitioned: 0, encumbered: 0, expended: 0 });
+                            }
+                            finalCategoryId = newCatIdMap[item.newCategoryName];
+                        }
+
+                        if (item.subId === 'NEW_SUB') {
+                            const subKey = finalCategoryId + '_' + item.newSubName;
+                            if (!newSubIdMap[subKey]) {
+                                const newId = 'new_sub_' + Date.now() + '_' + idx;
+                                newSubIdMap[subKey] = newId;
+                                extraBudgetsToCreate.push({ id: newId, parent: finalCategoryId, title: item.newSubName, type: 'sub', amount: 0, requisitioned: 0, encumbered: 0, expended: 0 });
+                            }
+                            finalSubId = newSubIdMap[subKey];
+                        }
+
                         return {
-                            ...item,
-                            isNew: true,
-                            budgetId: 'new_' + Date.now() + Math.random(),
-                            parent: '17' // Default to 글로컬교육센터(도) for mock logic, real app needs parent selection
+                            ...item, isNew: true, budgetId: 'new_item_' + Date.now() + '_' + idx,
+                            parent: finalSubId, subTitle: item.subTitle, title: item.title
                         };
                     }
                     return item;
                 });
-                onConfirm({ date, description, items: processedItems });
+
+                // Firebase Storage 업로드 로직 (연도/월별 폴더 분류)
+                let uploadedFileData = [];
+                if (filesToUpload.length > 0 && auth && auth.currentUser && storage) {
+                    const appId = getAppId();
+                    const yearStr = date.substring(0, 4);
+                    const monthStr = date.substring(5, 7);
+                    
+                    try {
+                        for (const file of filesToUpload) {
+                            // Rule 1 준수: artifacts/{appId}/users/{userId}/...
+                            const filePath = `artifacts/${appId}/users/${auth.currentUser.uid}/pdfs/${yearStr}/${monthStr}/${Date.now()}_${file.name}`;
+                            const storageRef = storage.ref().child(filePath);
+                            await storageRef.put(file);
+                            const downloadUrl = await storageRef.getDownloadURL();
+                            uploadedFileData.push({ name: file.name, url: downloadUrl, path: filePath });
+                        }
+                    } catch (error) {
+                        console.error("File upload failed:", error);
+                        alert("파일 업로드에 실패했습니다. 관리자에게 문의하거나 권한을 확인하세요.");
+                        setIsUploading(false);
+                        return; // 실패 시 진행 중지
+                    }
+                }
+
+                setIsUploading(false);
+                onConfirm({ date, description, items: processedItems }, extraBudgetsToCreate, uploadedFileData);
             };
 
             return (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-                    <div className="bg-white rounded-lg p-6 w-[600px] max-w-full shadow-2xl">
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 overflow-y-auto">
+                    <div className="bg-white rounded-lg p-6 w-[900px] max-w-5xl shadow-2xl my-8">
                         <div className="flex justify-between items-center mb-4 border-b pb-2">
                             <h3 className="text-xl font-bold">{config.title}</h3>
-                            <button onClick={onClose} className="text-gray-500 hover:text-black"><i className="fa-solid fa-xmark text-xl"></i></button>
+                            <button onClick={onClose} disabled={isUploading} className="text-gray-500 hover:text-black"><i className="fa-solid fa-xmark text-xl"></i></button>
                         </div>
 
-                        {config.type !== 'adjustment' && (
-                            <div className="mb-4 bg-blue-50 p-4 rounded border border-blue-200">
-                                <label className="block text-sm font-bold text-gray-700 mb-2">CSV 파일 업로드 (에듀파인 품의/결의서)</label>
-                                <input type="file" accept=".csv" onChange={handleFileChange} className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-blue-600 file:text-white hover:file:bg-blue-700" />
-                                {isScanning && <p className="text-blue-600 text-sm mt-2 animate-pulse"><i className="fa-solid fa-spinner fa-spin mr-1"></i> {scanMessage}</p>}
-                                {fileName && !isScanning && <p className="text-green-600 text-sm mt-2"><i className="fa-solid fa-check mr-1"></i> {fileName} {scanMessage}</p>}
-                                <p className="text-xs text-gray-500 mt-1">* 주의: 파일 형식이나 내용에 따라 목이 자동으로 매칭되지 않을 수 있습니다. 반드시 수동으로 확인하세요.</p>
-                            </div>
-                        )}
+                        {/* 증빙 자료(PDF) 업로드 섹션 */}
+                        <div className="mb-4 bg-gray-50 p-4 rounded border border-gray-300">
+                            <label className="block text-sm font-bold text-gray-700 mb-2"><i className="fa-solid fa-folder-open text-yellow-600 mr-2"></i>증빙 자료 첨부 (선택사항)</label>
+                            <input type="file" accept=".pdf" multiple onChange={handleFileSelect} className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-gray-600 file:text-white hover:file:bg-gray-700" />
+                            <p className="text-xs text-gray-500 mt-2">* 첨부된 파일은 클라우드(Storage)에 연도/월별로 안전하게 영구 보관되며, 장부 내역 탭에서 언제든 조회할 수 있습니다.</p>
+                        </div>
 
                         <form onSubmit={handleSubmit}>
                             <div className="grid grid-cols-2 gap-4 mb-4">
                                 <div>
-                                    <label className="block text-sm font-bold text-gray-700 mb-1">일자</label>
+                                    <label className="block text-sm font-bold text-gray-700 mb-1">처리 일자</label>
                                     <input type="date" value={date} onChange={(e) => setDate(e.target.value)} required className="w-full border rounded p-2 focus:ring focus:ring-blue-200" />
                                 </div>
                                 <div>
-                                    <label className="block text-sm font-bold text-gray-700 mb-1">적요 (내용)</label>
-                                    <input type="text" value={description} onChange={(e) => setDescription(e.target.value)} required placeholder="ex) 강사수당 지급" className="w-full border rounded p-2 focus:ring focus:ring-blue-200" />
+                                    <label className="block text-sm font-bold text-gray-700 mb-1">적요 (건명)</label>
+                                    <input type="text" value={description} onChange={(e) => setDescription(e.target.value)} required placeholder="ex) 원어민 강사 수당 지급" className="w-full border rounded p-2 focus:ring focus:ring-blue-200" />
                                 </div>
                             </div>
 
                             <div className="mb-4">
-                                <label className="block text-sm font-bold text-gray-700 mb-1">금액 반영 내역</label>
+                                <label className="block text-sm font-bold text-gray-700 mb-1">금액 반영 내역 (수기 작성)</label>
                                 {items.map((item, index) => (
-                                    <div key={index} className="flex space-x-2 mb-2 items-center bg-gray-50 p-2 rounded">
-                                        <select 
-                                            value={item.budgetId} 
-                                            onChange={(e) => {
-                                                const newItems = [...items];
-                                                newItems[index].budgetId = e.target.value;
-                                                setItems(newItems);
-                                            }}
-                                            className="flex-1 border rounded p-2 text-sm"
-                                            required
-                                        >
-                                            <option value="">목 선택...</option>
-                                            {config.type === 'adjustment' && <option value="NEW" className="font-bold text-blue-600">+ 신규 목 생성 (성립전)</option>}
-                                            {budgets.map(b => (
-                                                <option key={b.id} value={b.id}>[{b.subTitle}] {b.title}</option>
-                                            ))}
-                                        </select>
-                                        
-                                        {item.budgetId === 'NEW' && config.type === 'adjustment' ? (
-                                            <>
-                                                <input type="text" placeholder="통계비목" onChange={e => {const n=[...items]; n[index].subTitle=e.target.value; setItems(n)}} className="w-24 border rounded p-2 text-sm" required />
-                                                <input type="text" placeholder="산출내역" onChange={e => {const n=[...items]; n[index].title=e.target.value; setItems(n)}} className="w-32 border rounded p-2 text-sm" required />
-                                            </>
-                                        ) : null}
+                                    <div key={index} className="mb-2 p-3 bg-blue-50 rounded border border-blue-100">
+                                        <div className="flex space-x-2 items-center mb-2">
+                                            <select 
+                                                value={item.budgetId} 
+                                                onChange={(e) => {
+                                                    const newItems = [...items];
+                                                    newItems[index].budgetId = e.target.value;
+                                                    setItems(newItems);
+                                                }}
+                                                className="flex-1 border rounded p-2 text-sm"
+                                                required
+                                            >
+                                                <option value="">예산 내역(목) 직접 선택...</option>
+                                                {config.type === 'adjustment' && <option value="NEW" className="font-bold text-purple-600">+ 신규 예산 생성 (성립전)</option>}
+                                                {budgets.filter(b => b.type === 'item').map(b => (
+                                                    <option key={b.id} value={b.id}>[{b.subTitle}] {b.title}</option>
+                                                ))}
+                                            </select>
 
-                                        <input 
-                                            type="number" 
-                                            value={item.amount || ''} 
-                                            onChange={(e) => {
-                                                const newItems = [...items];
-                                                newItems[index].amount = parseInt(e.target.value) || 0;
-                                                setItems(newItems);
-                                            }}
-                                            placeholder="금액"
-                                            className="w-32 border rounded p-2 text-right"
-                                            required
-                                        />
-                                        <span className="text-sm">원</span>
-                                        {items.length > 1 && (
-                                            <button type="button" onClick={() => setItems(items.filter((_, i) => i !== index))} className="text-red-500 hover:text-red-700 p-2"><i className="fa-solid fa-trash"></i></button>
+                                            <input 
+                                                type="number" 
+                                                value={item.amount || ''} 
+                                                onChange={(e) => {
+                                                    const newItems = [...items];
+                                                    newItems[index].amount = parseInt(e.target.value) || 0;
+                                                    setItems(newItems);
+                                                }}
+                                                placeholder="금액 입력"
+                                                className="w-40 border rounded p-2 text-right font-bold"
+                                                required
+                                            />
+                                            <span className="text-sm font-bold">원</span>
+                                            {items.length > 1 && (
+                                                <button type="button" onClick={() => setItems(items.filter((_, i) => i !== index))} className="text-red-500 hover:bg-red-100 p-2 rounded"><i className="fa-solid fa-trash"></i></button>
+                                            )}
+                                        </div>
+                                        
+                                        {/* 신규 목 생성 시 4계층 구조 UI */}
+                                        {item.budgetId === 'NEW' && config.type === 'adjustment' && (
+                                            <div className="flex flex-col space-y-3 mt-2 pt-3 border-t border-purple-200 bg-purple-50 p-3 rounded">
+                                                <div className="flex space-x-4">
+                                                    <div className="w-1/2">
+                                                        <label className="block text-xs font-bold text-gray-500 mb-1">1. 세부사업 (최상위 정책사업)</label>
+                                                        <select value={item.categoryId} onChange={e => {const v=e.target.value; const n=[...items]; n[index].categoryId=v; n[index].subId=v==='NEW_CATEGORY'?'NEW_SUB':''; setItems(n);}} className="w-full border rounded p-1.5 text-sm" required>
+                                                            <option value="">기존 세부사업 선택...</option>
+                                                            {budgets.filter(b => b.type === 'category').map(b => <option key={b.id} value={b.id}>{b.title}</option>)}
+                                                            <option value="NEW_CATEGORY" className="font-bold text-purple-600">+ 신규 세부사업 작성</option>
+                                                        </select>
+                                                        {item.categoryId === 'NEW_CATEGORY' && <input type="text" placeholder="새 세부사업명 입력" value={item.newCategoryName} onChange={e => {const n=[...items]; n[index].newCategoryName=e.target.value; setItems(n)}} className="w-full border-2 border-purple-400 rounded p-1.5 text-sm mt-2" required />}
+                                                    </div>
+                                                    <div className="w-1/2">
+                                                        <label className="block text-xs font-bold text-gray-500 mb-1">2. 세부항목 (단위사업)</label>
+                                                        <select value={item.subId} onChange={e => {const n=[...items]; n[index].subId=e.target.value; setItems(n)}} className="w-full border rounded p-1.5 text-sm" required disabled={!item.categoryId}>
+                                                            <option value="">세부항목 선택...</option>
+                                                            {item.categoryId && item.categoryId !== 'NEW_CATEGORY' && budgets.filter(b => b.type === 'sub' && b.parent === item.categoryId).map(b => <option key={b.id} value={b.id}>{b.title}</option>)}
+                                                            <option value="NEW_SUB" className="font-bold text-purple-600">+ 신규 세부항목 작성</option>
+                                                        </select>
+                                                        {item.subId === 'NEW_SUB' && <input type="text" placeholder="새 세부항목명 입력" value={item.newSubName} onChange={e => {const n=[...items]; n[index].newSubName=e.target.value; setItems(n)}} className="w-full border-2 border-purple-400 rounded p-1.5 text-sm mt-2" required />}
+                                                    </div>
+                                                </div>
+                                                <div className="flex space-x-4 mt-2">
+                                                    <div className="w-1/2">
+                                                        <label className="block text-xs font-bold text-gray-500 mb-1">3. 원가통계비목</label>
+                                                        <div className="flex space-x-2">
+                                                            {item.subId && item.subId !== 'NEW_SUB' && (
+                                                                <select value={item.subTitleAction} onChange={e => {const n=[...items]; n[index].subTitleAction=e.target.value; n[index].subTitle=''; setItems(n)}} className="w-1/3 border rounded p-1.5 text-sm"><option value="select">기존 비목</option><option value="new">+ 신규</option></select>
+                                                            )}
+                                                            {item.subTitleAction === 'select' && item.subId && item.subId !== 'NEW_SUB' ? (
+                                                                <select value={item.subTitle} onChange={e => {const n=[...items]; n[index].subTitle=e.target.value; setItems(n)}} className="w-2/3 border rounded p-1.5 text-sm" required>
+                                                                    <option value="">비목 선택...</option>
+                                                                    {Array.from(new Set(budgets.filter(b => b.parent === item.subId && b.type === 'item').map(b => b.subTitle))).map(st => <option key={st} value={st}>{st}</option>)}
+                                                                </select>
+                                                            ) : (
+                                                                <input type="text" placeholder="ex) 일반수용비" value={item.subTitle} onChange={e => {const n=[...items]; n[index].subTitle=e.target.value; setItems(n)}} className="flex-1 border-2 border-purple-400 rounded p-1.5 text-sm" required />
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                    <div className="w-1/2">
+                                                        <label className="block text-xs font-bold text-gray-500 mb-1">4. 산출내역 (최종 지출처)</label>
+                                                        <input type="text" placeholder="ex) 직업체험 강사수당" value={item.title} onChange={e => {const n=[...items]; n[index].title=e.target.value; setItems(n)}} className="w-full border rounded p-1.5 text-sm" required />
+                                                    </div>
+                                                </div>
+                                            </div>
                                         )}
                                     </div>
                                 ))}
-                                <button type="button" onClick={() => setItems([...items, {budgetId: '', amount: 0}])} className="text-sm text-blue-600 hover:underline mt-1">+ 내역 추가</button>
+                                <button type="button" onClick={() => setItems([...items, {budgetId: '', categoryId: '', newCategoryName: '', subId: '', newSubName: '', subTitleAction: 'select', subTitle: '', title: '', amount: 0}])} className="text-sm text-blue-600 hover:underline mt-1">+ 내역 추가</button>
                             </div>
 
                             <div className="flex justify-end space-x-2 pt-4 border-t">
-                                <button type="button" onClick={onClose} className="px-4 py-2 bg-gray-200 rounded hover:bg-gray-300">취소</button>
-                                <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 font-bold">장부 반영</button>
+                                <button type="button" onClick={onClose} disabled={isUploading} className="px-4 py-2 bg-gray-200 rounded hover:bg-gray-300">취소</button>
+                                <button type="submit" disabled={isUploading} className="px-6 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 font-bold flex items-center">
+                                    {isUploading ? <><i className="fa-solid fa-spinner fa-spin mr-2"></i>클라우드 저장 중...</> : '장부 반영'}
+                                </button>
                             </div>
                         </form>
                     </div>
@@ -935,33 +749,55 @@
         };
 
         // ==========================================
-        // Tab 2: History
+        // Tab 2: History & Detail Modal
         // ==========================================
         const HistoryTab = ({ transactions, budgets, onPrint, onDelete }) => {
             const [searchTerm, setSearchTerm] = React.useState('');
             const [filterType, setFilterType] = React.useState('all');
+            const [sortOrder, setSortOrder] = React.useState('desc'); // 기본 내림차순(최신순)
+            const [selectedTx, setSelectedTx] = React.useState(null); // 모달 표시용 거래내역
 
-            const getBudgetName = (id) => {
-                const b = budgets.find(b => b.id === id);
-                return b ? `[${b.subTitle}] ${b.title}` : '알 수 없음/삭제됨';
+            // 위계(세부사업>세부항목>통계비목>산출내역) 풀네임 생성 유틸리티
+            const getFullBudgetHierarchy = (budgetId) => {
+                const item = budgets.find(b => b.id === budgetId);
+                if (!item) return '알 수 없음/삭제됨';
+                
+                const sub = budgets.find(b => b.id === item.parent);
+                const category = sub ? budgets.find(b => b.id === sub.parent) : null;
+                
+                const catStr = category ? category.title : '';
+                const subStr = sub ? sub.title : '';
+                
+                return {
+                    fullPath: `${catStr} > ${subStr} > ${item.subTitle} > ${item.title}`,
+                    shortPath: `[${item.subTitle}] ${item.title}`,
+                    cat: catStr, sub: subStr, subTitle: item.subTitle, title: item.title
+                };
             };
 
             const getTypeLabel = (type) => {
                 switch(type) {
-                    case 'requisition': return <span className="text-green-600 font-bold">품의</span>;
-                    case 'encumbrance': return <span className="text-orange-600 font-bold">원인행위</span>;
-                    case 'expenditure': return <span className="text-blue-600 font-bold">지출</span>;
-                    case 'adjustment': return <span className="text-purple-600 font-bold">예산조정</span>;
+                    case 'requisition': return <span className="bg-green-100 text-green-700 px-2 py-1 rounded text-xs font-bold border border-green-300">품의</span>;
+                    case 'encumbrance': return <span className="bg-orange-100 text-orange-700 px-2 py-1 rounded text-xs font-bold border border-orange-300">원인행위</span>;
+                    case 'expenditure': return <span className="bg-blue-100 text-blue-700 px-2 py-1 rounded text-xs font-bold border border-blue-300">지출</span>;
+                    case 'adjustment': return <span className="bg-purple-100 text-purple-700 px-2 py-1 rounded text-xs font-bold border border-purple-300">예산조정</span>;
                     default: return type;
                 }
             };
 
-            // Flatten items inside transactions for display
+            // 정렬 처리
+            const sortedTransactions = [...transactions].sort((a, b) => {
+                const dateA = new Date(a.date).getTime();
+                const dateB = new Date(b.date).getTime();
+                return sortOrder === 'desc' ? dateB - dateA : dateA - dateB;
+            });
+
+            // Flatten for display
             let displayRows = [];
-            transactions.forEach(t => {
+            sortedTransactions.forEach(t => {
                 t.items.forEach((item, idx) => {
                     displayRows.push({
-                        ...t,
+                        ...t, // 원본 트랜잭션 데이터 (id, date, type, description, attachedFiles 등)
                         itemId: `${t.id}_${idx}`,
                         budgetId: item.budgetId,
                         amount: item.amount,
@@ -971,10 +807,9 @@
                 });
             });
 
-            // Filter
             const filteredRows = displayRows.filter(row => {
                 const matchType = filterType === 'all' || row.type === filterType;
-                const matchSearch = row.description.includes(searchTerm) || getBudgetName(row.budgetId).includes(searchTerm) || row.date.includes(searchTerm);
+                const matchSearch = row.description.includes(searchTerm) || getFullBudgetHierarchy(row.budgetId).shortPath.includes(searchTerm) || row.date.includes(searchTerm);
                 return matchType && matchSearch;
             });
 
@@ -983,19 +818,20 @@
                     <div className="flex justify-between items-center mb-6 no-print">
                         <h2 className="text-xl font-bold text-gray-800">예산 변동 내역 장부</h2>
                         <div className="flex space-x-2">
-                            <select value={filterType} onChange={e => setFilterType(e.target.value)} className="border rounded p-2">
+                            <button 
+                                onClick={() => setSortOrder(sortOrder === 'desc' ? 'asc' : 'desc')} 
+                                className="border border-gray-300 rounded px-3 py-2 text-sm hover:bg-gray-100 font-bold"
+                            >
+                                <i className={`fa-solid fa-arrow-down-${sortOrder === 'desc' ? 'wide-short' : 'short-wide'} mr-1`}></i>
+                                일자 {sortOrder === 'desc' ? '내림차순' : '올림차순'}
+                            </button>
+                            <select value={filterType} onChange={e => setFilterType(e.target.value)} className="border rounded p-2 text-sm">
                                 <option value="all">전체 내역</option>
                                 <option value="requisition">품의 내역</option>
                                 <option value="expenditure">지출 내역</option>
                                 <option value="adjustment">예산/성립전 조정</option>
                             </select>
-                            <input 
-                                type="text" 
-                                placeholder="날짜, 적요, 목 검색..." 
-                                value={searchTerm}
-                                onChange={e => setSearchTerm(e.target.value)}
-                                className="border rounded p-2 w-64"
-                            />
+                            <input type="text" placeholder="검색어 입력..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="border rounded p-2 w-64 text-sm" />
                             <button onClick={onPrint} className="bg-gray-600 text-white px-3 py-2 rounded hover:bg-gray-700"><i className="fa-solid fa-print"></i></button>
                         </div>
                     </div>
@@ -1005,37 +841,104 @@
                             <thead className="table-header">
                                 <tr>
                                     <th className="w-[12%]">일자</th>
-                                    <th className="w-[10%]">구분</th>
-                                    <th className="w-[25%]">적요 (내용)</th>
-                                    <th className="w-[25%]">예산 목</th>
+                                    <th className="w-[8%]">구분</th>
+                                    <th className="w-[27%]">적요 (상세보기 클릭)</th>
+                                    <th className="w-[25%]">예산 목 (세부)</th>
                                     <th className="w-[15%]">금액</th>
-                                    <th className="w-[13%]">관리</th>
+                                    <th className="w-[13%]">증빙/관리</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {filteredRows.length === 0 ? (
                                     <tr><td colSpan="6" className="text-center p-8 text-gray-500">기록된 내역이 없습니다.</td></tr>
                                 ) : (
-                                    filteredRows.map((row) => (
-                                        <tr key={row.itemId} className="hover:bg-gray-50 border-b">
-                                            {row.isFirstInGroup && <td className="p-3 text-center border-r" rowSpan={row.rowSpan}>{row.date}</td>}
-                                            {row.isFirstInGroup && <td className="p-3 text-center border-r" rowSpan={row.rowSpan}>{getTypeLabel(row.type)}</td>}
-                                            {row.isFirstInGroup && <td className="p-3 border-r" rowSpan={row.rowSpan}>{row.description}</td>}
-                                            <td className="p-3 border-r text-gray-700">{getBudgetName(row.budgetId)}</td>
-                                            <td className="p-3 text-right font-mono font-bold border-r">{formatKRW(row.amount)} 원</td>
-                                            {row.isFirstInGroup && (
-                                                <td className="p-3 text-center" rowSpan={row.rowSpan}>
-                                                    <button onClick={() => onDelete(row.id)} className="text-red-500 hover:bg-red-50 border border-red-500 rounded px-2 py-1 text-xs transition-colors">
-                                                        <i className="fa-solid fa-undo mr-1"></i>되돌리기
-                                                    </button>
+                                    filteredRows.map((row) => {
+                                        const hierarchy = getFullBudgetHierarchy(row.budgetId);
+                                        return (
+                                            <tr key={row.itemId} className="hover:bg-blue-50 border-b group">
+                                                {row.isFirstInGroup && <td className="p-3 text-center border-r" rowSpan={row.rowSpan}>{row.date}</td>}
+                                                {row.isFirstInGroup && <td className="p-3 text-center border-r" rowSpan={row.rowSpan}>{getTypeLabel(row.type)}</td>}
+                                                {row.isFirstInGroup && (
+                                                    <td className="p-3 border-r cursor-pointer hover:bg-blue-100 transition-colors" rowSpan={row.rowSpan} onClick={() => setSelectedTx(transactions.find(t => t.id === row.id))}>
+                                                        <span className="font-bold text-blue-800 underline decoration-blue-300">{row.description}</span>
+                                                    </td>
+                                                )}
+                                                <td className="p-3 border-r text-gray-700">
+                                                    <div className="text-xs text-gray-400 mb-1">{hierarchy.cat} &gt; {hierarchy.sub}</div>
+                                                    <div className="font-bold">[{hierarchy.subTitle}] {hierarchy.title}</div>
                                                 </td>
-                                            )}
-                                        </tr>
-                                    ))
+                                                <td className="p-3 text-right font-mono font-bold border-r">{formatKRW(row.amount)} 원</td>
+                                                {row.isFirstInGroup && (
+                                                    <td className="p-3 text-center space-y-2" rowSpan={row.rowSpan}>
+                                                        {row.attachedFiles && row.attachedFiles.length > 0 && (
+                                                            <div className="text-xs text-green-600 font-bold mb-1"><i className="fa-solid fa-paperclip"></i> 첨부 {row.attachedFiles.length}건</div>
+                                                        )}
+                                                        <button onClick={() => onDelete(row.id)} className="text-red-500 hover:bg-red-50 border border-red-500 rounded px-2 py-1 text-xs transition-colors w-full">
+                                                            <i className="fa-solid fa-undo mr-1"></i>되돌리기
+                                                        </button>
+                                                    </td>
+                                                )}
+                                            </tr>
+                                        )
+                                    })
                                 )}
                             </tbody>
                         </table>
                     </div>
+
+                    {/* Transaction Detail Modal */}
+                    {selectedTx && (
+                        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50">
+                            <div className="bg-white rounded-xl p-8 w-[800px] max-w-full shadow-2xl relative">
+                                <button onClick={() => setSelectedTx(null)} className="absolute top-4 right-6 text-gray-400 hover:text-black text-2xl"><i className="fa-solid fa-xmark"></i></button>
+                                
+                                <div className="border-b pb-4 mb-4">
+                                    <div className="flex items-center space-x-3 mb-2">
+                                        {getTypeLabel(selectedTx.type)}
+                                        <span className="text-gray-500 font-bold"><i className="fa-regular fa-calendar mr-1"></i>{selectedTx.date}</span>
+                                    </div>
+                                    <h3 className="text-2xl font-bold text-gray-900">{selectedTx.description}</h3>
+                                </div>
+
+                                <div className="mb-6">
+                                    <h4 className="text-sm font-bold text-gray-700 mb-3 bg-gray-100 p-2 rounded">예산 반영 내역 풀이</h4>
+                                    <ul className="space-y-3">
+                                        {selectedTx.items.map((item, idx) => {
+                                            const h = getFullBudgetHierarchy(item.budgetId);
+                                            return (
+                                                <li key={idx} className="flex justify-between items-center border border-blue-100 bg-blue-50 p-3 rounded">
+                                                    <div className="text-sm">
+                                                        <div className="text-gray-500 text-xs mb-1">{h.cat} <i className="fa-solid fa-chevron-right text-[10px] mx-1"></i> {h.sub} <i className="fa-solid fa-chevron-right text-[10px] mx-1"></i> <span className="text-purple-600 font-bold">{h.subTitle}</span></div>
+                                                        <div className="font-bold text-gray-800 text-base">{h.title}</div>
+                                                    </div>
+                                                    <div className="font-mono text-lg font-bold text-blue-700">{formatKRW(item.amount)} 원</div>
+                                                </li>
+                                            )
+                                        })}
+                                    </ul>
+                                </div>
+
+                                <div>
+                                    <h4 className="text-sm font-bold text-gray-700 mb-3 bg-gray-100 p-2 rounded">첨부된 증빙 서류</h4>
+                                    {(!selectedTx.attachedFiles || selectedTx.attachedFiles.length === 0) ? (
+                                        <p className="text-gray-500 text-sm p-3"><i className="fa-solid fa-circle-exclamation mr-1"></i>첨부된 파일이 없습니다.</p>
+                                    ) : (
+                                        <div className="grid grid-cols-2 gap-3">
+                                            {selectedTx.attachedFiles.map((file, idx) => (
+                                                <a key={idx} href={file.url} target="_blank" rel="noopener noreferrer" className="flex items-center p-3 border rounded hover:bg-gray-50 hover:border-blue-400 transition-colors group">
+                                                    <i className="fa-solid fa-file-pdf text-red-500 text-2xl mr-3"></i>
+                                                    <div className="overflow-hidden">
+                                                        <p className="text-sm font-bold text-gray-800 truncate group-hover:text-blue-600">{file.name}</p>
+                                                        <p className="text-xs text-gray-400 mt-1">클릭하여 열람 및 다운로드</p>
+                                                    </div>
+                                                </a>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    )}
                 </div>
             );
         };
@@ -1050,16 +953,15 @@
             React.useEffect(() => {
                 if (!chartRef.current) return;
 
-                // Prepare Data: Group expenditures by month (Mar ~ Feb)
                 const months = ['3월', '4월', '5월', '6월', '7월', '8월', '9월', '10월', '11월', '12월', '1월', '2월'];
                 const expData = new Array(12).fill(0);
                 const reqData = new Array(12).fill(0);
 
                 transactions.forEach(t => {
                     const d = new Date(t.date);
-                    const m = d.getMonth() + 1; // 1-12
+                    const m = d.getMonth() + 1;
                     let index = m - 3;
-                    if (index < 0) index += 12; // Jan/Feb wrap around
+                    if (index < 0) index += 12;
 
                     const totalAmount = t.items.reduce((sum, item) => sum + item.amount, 0);
                     if (t.type === 'expenditure') expData[index] += totalAmount;
@@ -1073,45 +975,18 @@
                     data: {
                         labels: months,
                         datasets: [
-                            {
-                                label: '월별 지출액',
-                                data: expData,
-                                backgroundColor: 'rgba(59, 130, 246, 0.7)',
-                                borderColor: 'rgb(59, 130, 246)',
-                                borderWidth: 1
-                            },
-                            {
-                                label: '월별 품의액',
-                                data: reqData,
-                                type: 'line',
-                                borderColor: 'rgb(16, 185, 129)',
-                                backgroundColor: 'transparent',
-                                borderDash: [5, 5],
-                                tension: 0.1
-                            }
+                            { label: '월별 지출액', data: expData, backgroundColor: 'rgba(59, 130, 246, 0.7)', borderColor: 'rgb(59, 130, 246)', borderWidth: 1 },
+                            { label: '월별 품의액', data: reqData, type: 'line', borderColor: 'rgb(16, 185, 129)', backgroundColor: 'transparent', borderDash: [5, 5], tension: 0.1 }
                         ]
                     },
-                    options: {
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        plugins: {
-                            legend: { position: 'top' },
-                            title: { display: true, text: `${year}학년도 월별 예산 집행 추이` }
-                        },
-                        scales: {
-                            y: { beginAtZero: true, ticks: { callback: (value) => (value / 10000).toLocaleString() + '만' } }
-                        }
-                    }
+                    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top' }, title: { display: true, text: `${year}학년도 월별 예산 집행 추이` } }, scales: { y: { beginAtZero: true, ticks: { callback: (value) => (value / 10000).toLocaleString() + '만' } } } }
                 });
 
                 return () => { if (chartInstance.current) chartInstance.current.destroy(); };
             }, [transactions, year]);
 
-            // Seoul Time & Prediction Logic
             const seoulTime = new Date().toLocaleString("ko-KR", { timeZone: "Asia/Seoul" });
             const currentMonth = new Date().toLocaleString("ko-KR", { timeZone: "Asia/Seoul", month: "numeric" }).replace('월', '').trim();
-            
-            // Mock Prediction (Since we don't have multi-year DB access in this isolated component)
             const predictionText = `작년 동월(${currentMonth}월) 데이터 분석 결과, 주로 '원어민보조교사 수당' 지출이 집중되는 시기입니다. 품의 결재 일정을 선제적으로 관리하시기 바랍니다.`;
 
             return (
@@ -1119,25 +994,17 @@
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                         <div className="bg-white rounded shadow p-6 md:col-span-2">
                             <h2 className="text-xl font-bold text-gray-800 mb-4">예산 집행 시각화</h2>
-                            <div className="h-80 relative">
-                                <canvas ref={chartRef}></canvas>
-                            </div>
+                            <div className="h-80 relative"><canvas ref={chartRef}></canvas></div>
                         </div>
-                        
                         <div className="bg-white rounded shadow p-6 flex flex-col">
                             <h2 className="text-xl font-bold text-gray-800 mb-4">일정 및 예측 안내</h2>
-                            
                             <div className="bg-blue-50 p-4 rounded mb-4">
                                 <p className="text-sm text-gray-500 mb-1">기준 시간 (서울)</p>
                                 <p className="font-bold text-lg text-blue-800"><i className="fa-regular fa-clock mr-2"></i>{seoulTime}</p>
                             </div>
-
                             <div className="bg-yellow-50 border border-yellow-200 p-4 rounded flex-1">
                                 <h3 className="font-bold text-yellow-800 mb-2"><i className="fa-solid fa-lightbulb mr-2"></i>이번 달 지출 예측</h3>
-                                <p className="text-sm text-gray-700 leading-relaxed">
-                                    {predictionText}
-                                </p>
-                                <p className="text-xs text-gray-400 mt-4">* 본 예측은 이전 연도 데이터를 바탕으로 생성된 참고 자료입니다.</p>
+                                <p className="text-sm text-gray-700 leading-relaxed">{predictionText}</p>
                             </div>
                         </div>
                     </div>
