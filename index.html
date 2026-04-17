@@ -1,359 +1,384 @@
-import React, { useState, useMemo } from 'react';
-/* 사이드바와 대시보드를 유지하기 위한 아이콘들입니다. */
-import { 
-  ShieldCheck, Info, PlusCircle, CheckCircle2, AlertCircle, Save,
-  LayoutDashboard, Calendar, FileText, Users, Clock, User, Settings
-} from 'lucide-react';
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sazabi Master OS</title>
+  <!-- Tailwind CSS: 꽉 차는 레이아웃을 위한 핵심 도구 -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- FontAwesome: 아이콘 -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <!-- React & Babel -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    body, html { font-family: 'Pretendard', -apple-system, sans-serif; height: 100%; margin: 0; overflow: hidden; }
+    /* 숫자를 입력할 때 브라우저 기본 화살표(스피너)를 없애서 깔끔하게 만듭니다. */
+    input[type=number]::-webkit-inner-spin-button, 
+    input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+    /* 테이블 스크롤바 디자인 (데스크톱 앱 느낌) */
+    .custom-scrollbar::-webkit-scrollbar { width: 8px; height: 8px; }
+    .custom-scrollbar::-webkit-scrollbar-track { background: #f1f5f9; }
+    .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+    .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+  </style>
+</head>
+<body class="bg-slate-100">
+  <div id="root" class="h-full"></div>
 
-/**
- * [2022 개정 교육과정 총론 기준 데이터 (학년군별)]
- * 사자비 님의 지적대로 학년(1개)이 아닌 학년군(2개 학년) 단위로 데이터를 묶었습니다.
- * 기준 시수(std)는 2개 학년의 합산 시수입니다. (예: 5-6학년군 국어 = 408시간)
- */
-const GRADE_GROUP_DATA = {
-  '1-2': {
-    grades: [1, 2],
-    total: 1700,
-    groups: [
-      { id: 'korean', name: '국어', subjects: ['korean'], std: 442 },
-      { id: 'math', name: '수학', subjects: ['math'], std: 256 },
-      { id: 'integrated', name: '바/슬/즐', subjects: ['disciplined', 'wise', 'pleasant'], std: 738 },
-      { id: 'creative', name: '창체', subjects: ['creative'], std: 264 }
-    ]
-  },
-  '3-4': {
-    grades: [3, 4],
-    total: 1972,
-    groups: [
-      { id: 'korean', name: '국어', subjects: ['korean'], std: 408 },
-      { id: 'social_moral', name: '사회/도덕', subjects: ['social', 'moral'], std: 272 },
-      { id: 'math', name: '수학', subjects: ['math'], std: 272 },
-      { id: 'science', name: '과학', subjects: ['science'], std: 204 },
-      { id: 'physical', name: '체육', subjects: ['physical'], std: 204 },
-      { id: 'arts', name: '예술(음/미)', subjects: ['music', 'art'], std: 272 },
-      { id: 'english', name: '영어', subjects: ['english'], std: 136 },
-      { id: 'creative', name: '창체', subjects: ['creative'], std: 204 }
-    ]
-  },
-  '5-6': {
-    grades: [5, 6],
-    total: 2176,
-    groups: [
-      { id: 'korean', name: '국어', subjects: ['korean'], std: 408 },
-      { id: 'social_moral', name: '사회/도덕', subjects: ['social', 'moral'], std: 272 },
-      { id: 'math', name: '수학', subjects: ['math'], std: 272 },
-      { id: 'science_practical', name: '과학/실과', subjects: ['science', 'practical'], std: 340 },
-      { id: 'physical', name: '체육', subjects: ['physical'], std: 204 },
-      { id: 'arts', name: '예술(음/미)', subjects: ['music', 'art'], std: 272 },
-      { id: 'english', name: '영어', subjects: ['english'], std: 204 },
-      { id: 'creative', name: '창체', subjects: ['creative'], std: 204 }
-    ]
-  }
-};
+  <script type="text/babel">
+    const { useState, useMemo } = React;
 
-const SUBJECT_NAME = {
-  korean: '국어', social: '사회', moral: '도덕', math: '수학', science: '과학',
-  practical: '실과', physical: '체육', music: '음악', art: '미술', english: '영어',
-  disciplined: '바른생활', wise: '슬기로운생활', pleasant: '즐거운생활', creative: '창체'
-};
+    /**
+     * [2022 개정 교육과정 총론 기준 데이터]
+     * 학년군 단위로 묶인 정확한 기준 시수 데이터입니다.
+     */
+    const GRADE_GROUP_DATA = {
+      '1-2': {
+        grades: [1, 2], total: 1700,
+        groups: [
+          { id: 'korean', name: '국어', subjects: ['korean'], std: 442 },
+          { id: 'math', name: '수학', subjects: ['math'], std: 256 },
+          { id: 'integrated', name: '바/슬/즐', subjects: ['disciplined', 'wise', 'pleasant'], std: 738 },
+          { id: 'creative', name: '창체', subjects: ['creative'], std: 264 }
+        ]
+      },
+      '3-4': {
+        grades: [3, 4], total: 1972,
+        groups: [
+          { id: 'korean', name: '국어', subjects: ['korean'], std: 408 },
+          { id: 'social_moral', name: '사회/도덕', subjects: ['social', 'moral'], std: 272 },
+          { id: 'math', name: '수학', subjects: ['math'], std: 272 },
+          { id: 'science', name: '과학', subjects: ['science'], std: 204 },
+          { id: 'physical', name: '체육', subjects: ['physical'], std: 204 },
+          { id: 'arts', name: '예술(음/미)', subjects: ['music', 'art'], std: 272 },
+          { id: 'english', name: '영어', subjects: ['english'], std: 136 },
+          { id: 'creative', name: '창체', subjects: ['creative'], std: 204 }
+        ]
+      },
+      '5-6': {
+        grades: [5, 6], total: 2176,
+        groups: [
+          { id: 'korean', name: '국어', subjects: ['korean'], std: 408 },
+          { id: 'social_moral', name: '사회/도덕', subjects: ['social', 'moral'], std: 272 },
+          { id: 'math', name: '수학', subjects: ['math'], std: 272 },
+          { id: 'science_practical', name: '과학/실과', subjects: ['science', 'practical'], std: 340 },
+          { id: 'physical', name: '체육', subjects: ['physical'], std: 204 },
+          { id: 'arts', name: '예술(음/미)', subjects: ['music', 'art'], std: 272 },
+          { id: 'english', name: '영어', subjects: ['english'], std: 204 },
+          { id: 'creative', name: '창체', subjects: ['creative'], std: 204 }
+        ]
+      }
+    };
 
-export default function App() {
-  const [activeTab, setActiveTab] = useState('시수편제');
-  
-  // [상태] 사자비 님 요구대로 '학년군' 탭 단위로 화면을 통제합니다.
-  const [selectedGroup, setSelectedGroup] = useState('5-6');
-  
-  // [상태] 힌트 제어용 (시수를 뺐을 때 어디서 뺐는지 기억합니다)
-  const [hintInfo, setHintInfo] = useState({ group: null, trigger: null });
+    const SUBJECT_NAME = {
+      korean: '국어', social: '사회', moral: '도덕', math: '수학', science: '과학',
+      practical: '실과', physical: '체육', music: '음악', art: '미술', english: '영어',
+      disciplined: '바른생활', wise: '슬기로운생활', pleasant: '즐거운생활', creative: '창체'
+    };
 
-  // [상태] 전 학년(1~6)의 데이터베이스입니다. (초기값은 그룹 합계를 4학기로 나눈 값)
-  const [allHours, setAllHours] = useState(() => {
-    const initial = {};
-    [1, 2, 3, 4, 5, 6].forEach(g => { initial[g] = {}; });
-    
-    Object.values(GRADE_GROUP_DATA).forEach(groupData => {
-      const g1 = groupData.grades[0];
-      const g2 = groupData.grades[1];
-      groupData.groups.forEach(gInfo => {
-        gInfo.subjects.forEach(sub => {
-          // 학년군 총 기준 시수를 2개 학년, 2개 학기로 분할 (약 1/4씩 배분)
-          const perSem = Math.floor(gInfo.std / gInfo.subjects.length / 4);
-          const remainder = (gInfo.std / gInfo.subjects.length) - (perSem * 4);
-          initial[g1][sub] = { s1: perSem, s2: perSem };
-          initial[g2][sub] = { s1: perSem, s2: perSem + Math.round(remainder) };
+    function App() {
+      const [activeTab, setActiveTab] = useState('시수편제');
+      const [selectedGroup, setSelectedGroup] = useState('5-6');
+      
+      // 전 학년 시수 데이터 상태
+      const [allHours, setAllHours] = useState(() => {
+        const initial = {};
+        [1, 2, 3, 4, 5, 6].forEach(g => { initial[g] = {}; });
+        
+        Object.values(GRADE_GROUP_DATA).forEach(groupData => {
+          const g1 = groupData.grades[0];
+          const g2 = groupData.grades[1];
+          groupData.groups.forEach(gInfo => {
+            gInfo.subjects.forEach(sub => {
+              const perSem = Math.floor(gInfo.std / gInfo.subjects.length / 4);
+              const remainder = (gInfo.std / gInfo.subjects.length) - (perSem * 4);
+              initial[g1][sub] = { s1: perSem, s2: perSem };
+              initial[g2][sub] = { s1: perSem, s2: perSem + Math.round(remainder) };
+            });
+          });
         });
+        return initial;
       });
-    });
-    return initial;
-  });
 
-  // [기능] 입력 핸들러 및 힌트(+) 트리거 로직
-  const handleInput = (grade, sub, sem, val, groupId) => {
-    const num = parseInt(val) || 0;
-    const oldVal = allHours[grade][sub][sem];
-    
-    // 시수가 줄어들면, 같은 교과군 내의 '다른 모든 칸'에 힌트를 띄우기 위해 기록합니다.
-    if (num < oldVal) {
-      setHintInfo({ group: groupId, trigger: { grade, sub, sem } });
-    } else {
-      setHintInfo({ group: null, trigger: null });
+      // 입력 핸들러: 숫자 입력 및 +/- 버튼 클릭 모두 처리
+      const handleInput = (grade, sub, sem, val) => {
+        const num = Math.max(0, parseInt(val) || 0); // 음수 방지
+        setAllHours(prev => ({
+          ...prev,
+          [grade]: { ...prev[grade], [sub]: { ...prev[grade][sub], [sem]: num } }
+        }));
+      };
+
+      // 💡 무결성 및 증감 검증 엔진
+      const analysis = useMemo(() => {
+        const config = GRADE_GROUP_DATA[selectedGroup];
+        const g1 = config.grades[0];
+        const g2 = config.grades[1];
+        let groupTotal = 0;
+        
+        const groupStats = config.groups.map(g => {
+          const sum = g.subjects.reduce((s, sub) => 
+            s + allHours[g1][sub].s1 + allHours[g1][sub].s2 + allHours[g2][sub].s1 + allHours[g2][sub].s2
+          , 0);
+          groupTotal += sum;
+          const diff = sum - g.std;
+          const variancePercent = Math.round((diff / g.std) * 100);
+          
+          const isOver20 = variancePercent > 20;
+          const isUnder20 = variancePercent < -20;
+
+          return { ...g, current: sum, diff, variancePercent, isOver20, isUnder20 };
+        });
+
+        const isTotalDeficient = groupTotal < config.total;
+
+        return { groupStats, groupTotal, targetTotal: config.total, grades: [g1, g2], isTotalDeficient };
+      }, [allHours, selectedGroup]);
+
+      return (
+        <div className="flex h-screen text-slate-800 overflow-hidden">
+          
+          {/* 사이드바 */}
+          <aside className="w-56 bg-slate-900 flex flex-col shadow-2xl z-20 shrink-0">
+            <div className="p-5 border-b border-slate-800">
+              <div className="flex items-center gap-2">
+                <i className="fa-solid fa-shield-halved text-blue-500 text-xl"></i>
+                <h1 className="text-white font-black text-base uppercase tracking-tight">Sazabi OS</h1>
+              </div>
+            </div>
+            <nav className="flex-grow p-3 space-y-1 overflow-y-auto">
+              <MenuBtn icon="fa-chart-pie" label="대시보드" active={activeTab === '대시보드'} onClick={() => setActiveTab('대시보드')} />
+              <MenuBtn icon="fa-calculator" label="시수편제" active={activeTab === '시수편제'} onClick={() => setActiveTab('시수편제')} />
+              <MenuBtn icon="fa-calendar-days" label="학사일정" active={activeTab === '학사일정'} onClick={() => setActiveTab('학사일정')} />
+              <MenuBtn icon="fa-file-lines" label="학생평가" active={activeTab === '학생평가'} onClick={() => setActiveTab('학생평가')} />
+              <MenuBtn icon="fa-users" label="반편성" active={activeTab === '반편성'} onClick={() => setActiveTab('반편성')} />
+              <MenuBtn icon="fa-gear" label="시스템설정" active={activeTab === '설정'} onClick={() => setActiveTab('설정')} />
+            </nav>
+            <div className="p-4 bg-slate-950 border-t border-slate-800 flex items-center gap-3">
+              <i className="fa-solid fa-user text-slate-400 text-sm"></i>
+              <span className="text-slate-300 text-xs font-bold">사자비 교무부장</span>
+            </div>
+          </aside>
+
+          {/* 메인 콘텐츠 영역 */}
+          <main className="flex-grow flex flex-col min-w-0 bg-slate-50">
+            {/* 상단바: 고정 높이 */}
+            <header className="h-16 bg-white border-b flex items-center justify-between px-6 shadow-sm z-10 shrink-0">
+              <div className="flex items-center gap-6">
+                <h2 className="text-lg font-black text-slate-800">{activeTab}</h2>
+                {activeTab === '시수편제' && (
+                  <div className="flex bg-slate-100 p-1 rounded-lg">
+                    {Object.keys(GRADE_GROUP_DATA).map(group => (
+                      <button 
+                        key={group} onClick={() => setSelectedGroup(group)}
+                        className={`px-4 py-1.5 rounded-md text-sm font-bold transition-all ${selectedGroup === group ? 'bg-white text-blue-600 shadow-sm border border-slate-200' : 'text-slate-500 hover:text-slate-700'}`}
+                      >
+                        {group}학년군
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              
+              {activeTab === '시수편제' && (
+                <div className="flex items-center gap-4">
+                  <div className={`px-5 py-2 rounded-xl border-2 flex items-center gap-3 ${analysis.isTotalDeficient ? 'bg-red-50 border-red-300 animate-pulse' : 'bg-slate-50 border-transparent'}`}>
+                    <span className="text-xs font-bold uppercase text-slate-500">학년군 총 시수</span>
+                    <span className={`text-lg font-black ${analysis.isTotalDeficient ? 'text-red-600' : 'text-green-600'}`}>
+                      {analysis.groupTotal} / {analysis.targetTotal}H
+                    </span>
+                    {analysis.isTotalDeficient && <span className="text-xs text-red-600 font-bold bg-red-100 px-2 py-0.5 rounded-full"><i className="fa-solid fa-circle-exclamation"></i> 미달</span>}
+                  </div>
+                  <button className="flex items-center gap-2 px-6 py-2.5 bg-slate-900 text-white rounded-xl font-bold text-sm shadow-md hover:bg-black transition-all">
+                    <i className="fa-solid fa-floppy-disk"></i> 저장
+                  </button>
+                </div>
+              )}
+            </header>
+
+            {/* 💡 창 크기에 맞춰 꽉 차는 영역 (flex-grow overflow-hidden) */}
+            <div className="flex-grow p-6 overflow-hidden flex flex-col">
+              {activeTab === '시수편제' && (
+                <CurriculumScreen analysis={analysis} allHours={allHours} handleInput={handleInput} />
+              )}
+              {activeTab === '대시보드' && <DashboardScreen />}
+              {!['시수편제', '대시보드'].includes(activeTab) && (
+                <div className="flex-grow flex flex-col items-center justify-center text-slate-400">
+                  <i className="fa-solid fa-gear fa-spin text-5xl mb-4 opacity-50"></i>
+                  <h3 className="text-lg font-bold">{activeTab} 모듈 준비 중</h3>
+                </div>
+              )}
+            </div>
+          </main>
+        </div>
+      );
     }
 
-    setAllHours(prev => ({
-      ...prev,
-      [grade]: { ...prev[grade], [sub]: { ...prev[grade][sub], [sem]: num } }
-    }));
-  };
+    /**
+     * [자동 꽉참(Fluid) 편제표 컴포넌트]
+     * 창 크기를 늘리면 표도 같이 늘어납니다. 스크롤바는 표 내부에만 생기도록 처리했습니다.
+     */
+    function CurriculumScreen({ analysis, allHours, handleInput }) {
+      const g1 = analysis.grades[0];
+      const g2 = analysis.grades[1];
 
-  // [연산] 학년군별 합산 및 무결성 검증 (실시간)
-  const analysis = useMemo(() => {
-    const config = GRADE_GROUP_DATA[selectedGroup];
-    const g1 = config.grades[0];
-    const g2 = config.grades[1];
-    let groupTotal = 0;
-    
-    const groupStats = config.groups.map(g => {
-      const sum = g.subjects.reduce((s, sub) => 
-        s + allHours[g1][sub].s1 + allHours[g1][sub].s2 + allHours[g2][sub].s1 + allHours[g2][sub].s2
-      , 0);
-      groupTotal += sum;
-      return { ...g, current: sum, diff: sum - g.std };
-    });
+      return (
+        <div className="flex-grow flex flex-col bg-white border border-slate-300 shadow-md rounded-xl overflow-hidden">
+          <div className="overflow-y-auto custom-scrollbar flex-grow">
+            <table className="w-full border-collapse h-full">
+              <thead className="bg-slate-100 border-b-2 border-slate-300 sticky top-0 z-10">
+                <tr className="text-sm font-bold text-slate-600 text-center">
+                  <th className="py-2 px-3 border-r w-24">교과군</th>
+                  <th className="py-2 px-3 border-r w-24">교과목</th>
+                  <th colSpan={3} className="py-2 px-3 border-r bg-blue-50 text-blue-800">{g1}학년</th>
+                  <th colSpan={3} className="py-2 px-3 border-r bg-emerald-50 text-emerald-800">{g2}학년</th>
+                  <th className="py-2 px-3 border-r w-20">기준</th>
+                  <th className="py-2 px-3 border-r w-20">합계</th>
+                  <th className="py-2 px-3 w-24">증감(%)</th>
+                </tr>
+                <tr className="text-xs font-medium text-slate-500 text-center bg-white border-b border-slate-200">
+                  <th className="py-1.5 border-r"></th>
+                  <th className="py-1.5 border-r"></th>
+                  <th className="py-1.5 border-r w-20">1학기</th>
+                  <th className="py-1.5 border-r w-20">2학기</th>
+                  <th className="py-1.5 border-r w-16 bg-slate-50 font-bold">소계</th>
+                  <th className="py-1.5 border-r w-20">1학기</th>
+                  <th className="py-1.5 border-r w-20">2학기</th>
+                  <th className="py-1.5 border-r w-16 bg-slate-50 font-bold">소계</th>
+                  <th className="py-1.5 border-r"></th>
+                  <th className="py-1.5 border-r"></th>
+                  <th className="py-1.5"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200 text-center text-sm">
+                {analysis.groupStats.map((group) => {
+                  // 💡 정확한 힌트 로직:
+                  // 1. 해당 교과군이 20% 초과면 -> 전체 칸에 [-] 힌트
+                  // 2. 해당 교과군이 20% 미만이거나, '총 시수'가 부족한데 이 과목은 20%를 넘지 않았다면 -> 전체 칸에 [+] 힌트
+                  const showMinusHint = group.isOver20;
+                  const showPlusHint = group.isUnder20 || (analysis.isTotalDeficient && !group.isOver20);
 
-    return { groupStats, groupTotal, targetTotal: config.total, grades: [g1, g2] };
-  }, [allHours, selectedGroup]);
+                  return (
+                    <React.Fragment key={group.id}>
+                      {group.subjects.map((sub, idx) => {
+                        const g1s1 = allHours[g1][sub].s1;
+                        const g1s2 = allHours[g1][sub].s2;
+                        const g2s1 = allHours[g2][sub].s1;
+                        const g2s2 = allHours[g2][sub].s2;
+                        const subTotal1 = g1s1 + g1s2;
+                        const subTotal2 = g2s1 + g2s2;
 
-  return (
-    <div className="flex h-screen bg-slate-100 font-sans text-slate-800 overflow-hidden">
-      
-      {/* 1. 사이드바 (구조 및 메뉴 완벽 유지) */}
-      <aside className="w-56 bg-slate-900 flex flex-col shadow-2xl z-20">
-        <div className="p-5 border-b border-slate-800">
-          <div className="flex items-center gap-2">
-            <ShieldCheck className="text-blue-500" size={20} />
-            <h1 className="text-white font-black text-lg uppercase tracking-tight">Sazabi OS</h1>
+                        return (
+                          <tr key={sub} className="hover:bg-slate-50 transition-colors">
+                            {idx === 0 && (
+                              <td rowSpan={group.subjects.length} className="p-3 border-r align-middle bg-slate-50/80">
+                                <span className="font-bold text-slate-700 leading-tight">{group.name}</span>
+                              </td>
+                            )}
+                            <td className="p-3 border-r font-bold text-slate-800">{SUBJECT_NAME[sub]}</td>
+                            
+                            {/* 입력 셀 렌더링 (사자비 님 요청: +/- 버튼 추가) */}
+                            {renderInputCell(g1, sub, 's1', g1s1, handleInput, showPlusHint, showMinusHint)}
+                            {renderInputCell(g1, sub, 's2', g1s2, handleInput, showPlusHint, showMinusHint)}
+                            <td className="p-3 border-r font-bold text-slate-400 bg-slate-50/50">{subTotal1}</td>
+
+                            {renderInputCell(g2, sub, 's1', g2s1, handleInput, showPlusHint, showMinusHint)}
+                            {renderInputCell(g2, sub, 's2', g2s2, handleInput, showPlusHint, showMinusHint)}
+                            <td className="p-3 border-r font-bold text-slate-400 bg-slate-50/50">{subTotal2}</td>
+
+                            {/* 💡 에러 시 붉은색 칠하기 */}
+                            {idx === 0 && (
+                              <>
+                                <td rowSpan={group.subjects.length} className="p-3 border-r align-middle bg-slate-50 text-slate-500 font-bold">{group.std}</td>
+                                <td rowSpan={group.subjects.length} className={`p-3 border-r align-middle font-black text-lg ${group.isOver20 || group.isUnder20 ? 'bg-red-50 text-red-600' : 'bg-blue-50/30 text-blue-800'}`}>
+                                  {group.current}
+                                </td>
+                                <td rowSpan={group.subjects.length} className={`p-3 align-middle font-bold ${group.isOver20 || group.isUnder20 ? 'bg-red-50 text-red-600' : 'text-slate-500'}`}>
+                                  {group.diff > 0 ? `+${group.diff}` : group.diff}
+                                  <div className="text-xs font-normal opacity-70 mt-0.5">({group.variancePercent}%)</div>
+                                </td>
+                              </>
+                            )}
+                          </tr>
+                        );
+                      })}
+                    </React.Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         </div>
-        <nav className="flex-grow p-3 space-y-1">
-          <MenuBtn icon={<LayoutDashboard size={16}/>} label="대시보드" active={activeTab === '대시보드'} onClick={() => setActiveTab('대시보드')} />
-          <MenuBtn icon={<Clock size={16}/>} label="시수편제" active={activeTab === '시수편제'} onClick={() => setActiveTab('시수편제')} />
-          <MenuBtn icon={<Calendar size={16}/>} label="학사일정" active={activeTab === '학사일정'} onClick={() => setActiveTab('학사일정')} />
-          <MenuBtn icon={<FileText size={16}/>} label="학생평가" active={activeTab === '학생평가'} onClick={() => setActiveTab('학생평가')} />
-          <MenuBtn icon={<Users size={16}/>} label="반편성" active={activeTab === '반편성'} onClick={() => setActiveTab('반편성')} />
-          <MenuBtn icon={<Settings size={16}/>} label="설정" active={activeTab === '설정'} onClick={() => setActiveTab('설정')} />
-        </nav>
-        <div className="p-4 bg-slate-950 border-t border-slate-800 flex items-center gap-2">
-          <User size={14} className="text-slate-400" />
-          <span className="text-slate-300 text-xs font-bold">사자비 부장님</span>
-        </div>
-      </aside>
+      );
+    }
 
-      {/* 2. 메인 콘텐츠 */}
-      <main className="flex-grow flex flex-col">
-        
-        {/* 상단바: 학년군 선택 탭으로 직관성 향상 */}
-        <header className="h-14 bg-white border-b flex items-center justify-between px-6 shadow-sm z-10">
-          <div className="flex items-center gap-6">
-            <h2 className="text-base font-black text-slate-800">{activeTab}</h2>
-            {activeTab === '시수편제' && (
-              <div className="flex bg-slate-100 p-1 rounded-lg">
-                {Object.keys(GRADE_GROUP_DATA).map(group => (
-                  <button 
-                    key={group} onClick={() => setSelectedGroup(group)}
-                    className={`px-3 py-1 rounded-md text-xs font-bold transition-all ${selectedGroup === group ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}
-                  >
-                    {group}학년군
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-          {activeTab === '시수편제' && (
-            <div className="flex items-center gap-4">
-              <div className="text-right">
-                <span className="text-[10px] text-slate-400 font-bold uppercase mr-2">학년군 총 시수</span>
-                <span className={`text-sm font-black ${analysis.groupTotal >= analysis.targetTotal ? 'text-green-600' : 'text-rose-500'}`}>
-                  {analysis.groupTotal} / {analysis.targetTotal}H
-                </span>
-              </div>
-              <button className="flex items-center gap-2 px-4 py-1.5 bg-slate-900 text-white rounded-lg font-bold text-xs shadow hover:bg-black">
-                <Save size={14} /> 저장
-              </button>
-            </div>
-          )}
-        </header>
-
-        {/* 뷰 영역 */}
-        <div className="flex-grow p-4 overflow-auto bg-slate-50">
-          {activeTab === '시수편제' && (
-            <CurriculumScreen 
-              analysis={analysis} 
-              allHours={allHours} 
-              handleInput={handleInput} 
-              hintInfo={hintInfo} 
+    // [보조] 입력창과 +/- 버튼을 렌더링하는 컴포넌트
+    function renderInputCell(grade, sub, sem, value, handler, showPlus, showMinus) {
+      return (
+        <td className="p-2 border-r relative align-middle">
+          {/* 플렉스를 사용해 버튼과 입력창을 꽉 차게 배치합니다. */}
+          <div className="flex items-center justify-center gap-1 max-w-[100px] mx-auto">
+            <button 
+              onClick={() => handler(grade, sub, sem, value - 1)} 
+              className="w-7 h-7 shrink-0 flex items-center justify-center bg-slate-100 hover:bg-slate-200 rounded text-slate-500 transition-colors"
+            >
+              <i className="fa-solid fa-minus text-[10px]"></i>
+            </button>
+            <input 
+              type="number" 
+              value={value} 
+              onChange={(e) => handler(grade, sub, sem, e.target.value)}
+              className="w-10 text-center font-bold text-base focus:bg-yellow-50 focus:outline-none focus:ring-2 focus:ring-blue-400 rounded py-1" 
             />
-          )}
-          {activeTab === '대시보드' && <DashboardScreen />}
-          {!['시수편제', '대시보드'].includes(activeTab) && <PlaceholderScreen label={activeTab} />}
+            <button 
+              onClick={() => handler(grade, sub, sem, value + 1)} 
+              className="w-7 h-7 shrink-0 flex items-center justify-center bg-slate-100 hover:bg-slate-200 rounded text-slate-500 transition-colors"
+            >
+              <i className="fa-solid fa-plus text-[10px]"></i>
+            </button>
+          </div>
+          
+          {/* 힌트 아이콘 표시 (셀의 우측 상단에 띄움) */}
+          {showPlus && <i className="fa-solid fa-circle-plus absolute right-1.5 top-1.5 text-blue-500 text-xs animate-bounce pointer-events-none drop-shadow-md"></i>}
+          {showMinus && <i className="fa-solid fa-circle-minus absolute right-1.5 top-1.5 text-red-500 text-xs animate-bounce pointer-events-none drop-shadow-md"></i>}
+        </td>
+      );
+    }
+
+    // 대시보드 유지
+    function DashboardScreen() {
+      return (
+        <div className="max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-6 animate-in fade-in h-full">
+          <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 h-40">
+            <p className="text-xs font-bold text-slate-400 uppercase">전체 진행률</p>
+            <p className="text-3xl font-black text-slate-800 mt-2">85%</p>
+          </div>
+          <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 h-40">
+            <p className="text-xs font-bold text-slate-400 uppercase">최근 편집자</p>
+            <p className="text-lg font-bold text-slate-800 mt-4">사자비 (연구부)</p>
+          </div>
+          <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 border-l-4 border-l-red-500 h-40">
+            <p className="text-xs font-bold text-slate-400 uppercase">시스템 알림</p>
+            <p className="text-sm font-bold text-red-600 mt-4"><i className="fa-solid fa-circle-exclamation mr-1"></i> 5-6학년군 총 시수 미달</p>
+          </div>
         </div>
-      </main>
-    </div>
-  );
-}
+      );
+    }
 
-/** * [초압축 컴팩트 편제표 컴포넌트]
- * 학년군 2개를 가로로 나란히 배치하여 한눈에 조절 가능하게 만들었습니다.
- * 패딩과 폰트를 줄여 스크롤 없이 확인 가능합니다.
- */
-function CurriculumScreen({ analysis, allHours, handleInput, hintInfo }) {
-  const g1 = analysis.grades[0];
-  const g2 = analysis.grades[1];
+    // 사이드바 버튼
+    function MenuBtn({ icon, label, active, onClick }) {
+      return (
+        <button onClick={onClick} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${active ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
+          <i className={`fa-solid ${icon} w-5 text-center text-sm`}></i> <span className="text-sm font-bold">{label}</span>
+        </button>
+      );
+    }
 
-  // 특정 셀에 (+) 힌트를 띄울지 판단하는 함수
-  const shouldShowHint = (groupId, grade, sub, sem) => {
-    if (hintInfo.group !== groupId) return false;
-    const t = hintInfo.trigger;
-    // 시수를 줄인 바로 그 칸은 힌트에서 제외합니다.
-    if (t && t.grade === grade && t.sub === sub && t.sem === sem) return false;
-    return true;
-  };
-
-  return (
-    <div className="max-w-6xl mx-auto bg-white border border-slate-300 shadow-sm">
-      <table className="w-full border-collapse">
-        <thead className="bg-slate-100 border-b-2 border-slate-300">
-          <tr className="text-xs font-bold text-slate-600 text-center">
-            <th className="p-2 border-r w-24">교과군</th>
-            <th className="p-2 border-r w-24">교과목</th>
-            {/* 1번째 학년 컬럼 */}
-            <th colSpan={3} className="p-2 border-r bg-blue-50/60 text-blue-800">{g1}학년</th>
-            {/* 2번째 학년 컬럼 */}
-            <th colSpan={3} className="p-2 border-r bg-emerald-50/60 text-emerald-800">{g2}학년</th>
-            <th className="p-2 border-r w-20">학년군 기준</th>
-            <th className="p-2 border-r w-20">편제 합계</th>
-            <th className="p-2 w-16">증감</th>
-          </tr>
-          <tr className="text-[11px] font-medium text-slate-500 text-center bg-white border-b border-slate-200">
-            <th className="p-1 border-r"></th>
-            <th className="p-1 border-r"></th>
-            <th className="p-1 border-r w-14">1학기</th>
-            <th className="p-1 border-r w-14">2학기</th>
-            <th className="p-1 border-r w-14 bg-slate-50 font-bold">소계</th>
-            <th className="p-1 border-r w-14">1학기</th>
-            <th className="p-1 border-r w-14">2학기</th>
-            <th className="p-1 border-r w-14 bg-slate-50 font-bold">소계</th>
-            <th className="p-1 border-r"></th>
-            <th className="p-1 border-r"></th>
-            <th className="p-1"></th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-slate-200 text-center text-[12px]">
-          {analysis.groupStats.map((group) => (
-            <React.Fragment key={group.id}>
-              {group.subjects.map((sub, idx) => {
-                const g1s1 = allHours[g1][sub].s1;
-                const g1s2 = allHours[g1][sub].s2;
-                const g2s1 = allHours[g2][sub].s1;
-                const g2s2 = allHours[g2][sub].s2;
-                const subTotal1 = g1s1 + g1s2;
-                const subTotal2 = g2s1 + g2s2;
-
-                return (
-                  <tr key={sub} className="hover:bg-slate-50 transition-colors">
-                    {/* 교과군 병합 */}
-                    {idx === 0 && (
-                      <td rowSpan={group.subjects.length} className="p-2 border-r align-middle bg-slate-50/50">
-                        <span className="font-bold text-slate-700">{group.name}</span>
-                      </td>
-                    )}
-                    {/* 교과목 */}
-                    <td className="p-2 border-r font-medium text-slate-800">{SUBJECT_NAME[sub]}</td>
-                    
-                    {/* g1 학년 1학기 */}
-                    <td className="p-1 border-r relative">
-                      <input type="number" value={g1s1} onChange={(e) => handleInput(g1, sub, 's1', e.target.value, group.id)}
-                        className="w-full text-center font-bold focus:bg-yellow-50 focus:outline-none focus:ring-1 focus:ring-blue-400 rounded py-0.5" />
-                      {shouldShowHint(group.id, g1, sub, 's1') && <PlusCircle className="absolute right-0 top-1.5 text-blue-500 animate-bounce pointer-events-none" size={12} fill="white" />}
-                    </td>
-                    {/* g1 학년 2학기 */}
-                    <td className="p-1 border-r relative">
-                      <input type="number" value={g1s2} onChange={(e) => handleInput(g1, sub, 's2', e.target.value, group.id)}
-                        className="w-full text-center font-bold focus:bg-yellow-50 focus:outline-none focus:ring-1 focus:ring-blue-400 rounded py-0.5" />
-                      {shouldShowHint(group.id, g1, sub, 's2') && <PlusCircle className="absolute right-0 top-1.5 text-blue-500 animate-bounce pointer-events-none" size={12} fill="white" />}
-                    </td>
-                    <td className="p-1 border-r font-bold text-slate-500 bg-slate-50/50">{subTotal1}</td>
-
-                    {/* g2 학년 1학기 */}
-                    <td className="p-1 border-r relative">
-                      <input type="number" value={g2s1} onChange={(e) => handleInput(g2, sub, 's1', e.target.value, group.id)}
-                        className="w-full text-center font-bold focus:bg-yellow-50 focus:outline-none focus:ring-1 focus:ring-blue-400 rounded py-0.5" />
-                      {shouldShowHint(group.id, g2, sub, 's1') && <PlusCircle className="absolute right-0 top-1.5 text-blue-500 animate-bounce pointer-events-none" size={12} fill="white" />}
-                    </td>
-                    {/* g2 학년 2학기 */}
-                    <td className="p-1 border-r relative">
-                      <input type="number" value={g2s2} onChange={(e) => handleInput(g2, sub, 's2', e.target.value, group.id)}
-                        className="w-full text-center font-bold focus:bg-yellow-50 focus:outline-none focus:ring-1 focus:ring-blue-400 rounded py-0.5" />
-                      {shouldShowHint(group.id, g2, sub, 's2') && <PlusCircle className="absolute right-0 top-1.5 text-blue-500 animate-bounce pointer-events-none" size={12} fill="white" />}
-                    </td>
-                    <td className="p-1 border-r font-bold text-slate-500 bg-slate-50/50">{subTotal2}</td>
-
-                    {/* 💡 학년군 묶음 합계 및 검증 (가장 중요) */}
-                    {idx === 0 && (
-                      <>
-                        <td rowSpan={group.subjects.length} className="p-2 border-r align-middle bg-slate-50 text-slate-500 font-bold">{group.std}</td>
-                        <td rowSpan={group.subjects.length} className="p-2 border-r align-middle font-black text-slate-800 bg-blue-50/20">{group.current}</td>
-                        <td rowSpan={group.subjects.length} className={`p-2 align-middle font-bold ${group.diff === 0 ? 'text-green-600' : group.diff > 0 ? 'text-blue-600' : 'text-rose-600'}`}>
-                          {group.diff > 0 ? `+${group.diff}` : group.diff}
-                        </td>
-                      </>
-                    )}
-                  </tr>
-                );
-              })}
-            </React.Fragment>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-/** 대시보드 컴포넌트 복구 */
-function DashboardScreen() {
-  return (
-    <div className="max-w-5xl mx-auto space-y-6 animate-in fade-in">
-      <div className="grid grid-cols-3 gap-4">
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
-          <p className="text-[10px] font-bold text-slate-400 uppercase">전체 진행률</p>
-          <p className="text-2xl font-black text-slate-800">85%</p>
-        </div>
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
-          <p className="text-[10px] font-bold text-slate-400 uppercase">최근 편집자</p>
-          <p className="text-lg font-bold text-slate-800">사자비 (연구부)</p>
-        </div>
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
-          <p className="text-[10px] font-bold text-slate-400 uppercase">시스템 알림</p>
-          <p className="text-sm font-bold text-rose-500">3-4학년군 시수 미달</p>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// 사이드바 버튼
-function MenuBtn({ icon, label, active, onClick }) {
-  return (
-    <button onClick={onClick} className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all ${active ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:bg-slate-800'}`}>
-      {icon} <span className="text-sm font-bold">{label}</span>
-    </button>
-  );
-}
-
-function PlaceholderScreen({ label }) {
-  return (
-    <div className="flex flex-col items-center justify-center h-full text-slate-400">
-      <Settings size={40} className="animate-spin-slow mb-4 opacity-50" />
-      <h3 className="text-lg font-bold">{label} 모듈 준비 중</h3>
-    </div>
-  );
-}
+    // React 랜더링
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
