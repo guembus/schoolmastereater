@@ -11,37 +11,51 @@
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <script>tailwind.config = { darkMode: 'class' }</script>
   <style>
-    body, html { font-family: 'Pretendard', -apple-system, sans-serif; height: 100%; margin: 0; overflow: hidden; background-color: #f8fafc; }
+    body, html { font-family: 'Pretendard', 'Malgun Gothic', sans-serif; height: 100%; margin: 0; overflow: hidden; background-color: #f8fafc; }
     input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
     
     .custom-scrollbar::-webkit-scrollbar { width: 8px; height: 8px; }
     .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
     .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
     .dark .custom-scrollbar::-webkit-scrollbar-thumb { background: #475569; }
-    
-    /* 오류 발생 시 은은한 붉은색 테두리 효과 (정신 사나운 애니메이션 제거) */
-    .error-row { border-left: 4px solid #ef4444; background-color: rgba(254, 226, 226, 0.4); }
-    .dark .error-row { border-left: 4px solid #ef4444; background-color: rgba(127, 29, 29, 0.2); }
+
+    /* 💡 결함 발생 시 정적이고 강렬한 붉은색 테두리 (애니메이션 없음) */
+    .error-box { position: relative; }
+    .error-box::after {
+      content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+      border: 2px solid #ef4444; pointer-events: none; z-index: 10;
+    }
 
     .marquee-container { width: 140px; overflow: hidden; position: relative; white-space: nowrap; display: flex; align-items: center; }
     .marquee-content { display: inline-block; padding-left: 100%; animation: scroll-left 6s linear infinite; }
     @keyframes scroll-left { 0% { transform: translateX(0%); } 100% { transform: translateX(-100%); } }
+    
+    /* Sticky 헤더 픽스 */
+    .table-container { height: 100%; overflow-y: auto; position: relative; }
+    table { width: 100%; border-collapse: separate; border-spacing: 0; }
+    th { position: sticky; top: 0; z-index: 20; }
+    th.sub-header { top: 36px; z-index: 19; } /* 2번째 줄 헤더 */
+    
+    /* 일반 테두리 처리 (border-collapse: separate 일 때 테두리 유지) */
+    th, td { border-bottom: 1px solid #e2e8f0; border-right: 1px solid #e2e8f0; }
+    th:first-child, td:first-child { border-left: 1px solid #e2e8f0; }
+    tr:first-child th { border-top: 1px solid #e2e8f0; }
   </style>
 </head>
 <body>
   <div id="root" class="h-full"></div>
 
   <script type="text/babel">
-    const { useState, useMemo, useEffect } = React;
+    const { useState, useMemo } = React;
 
     const GRADE_GROUP_DATA = {
       '1-2': {
-        grades: [1, 2], total: 1700,
+        grades: [1, 2], total: 1744,
         groups: [
-          { id: 'korean', name: '국어', subjects: ['korean'], std: 442 },
+          { id: 'korean', name: '국어', subjects: ['korean'], std: 482 },
           { id: 'math', name: '수학', subjects: ['math'], std: 256 },
-          { id: 'integrated', name: '바/슬/즐', subjects: ['disciplined', 'wise', 'pleasant'], std: 738 },
-          { id: 'creative', name: '창체', subjects: ['creative_auto', 'creative_club', 'creative_career'], std: 264 }
+          { id: 'integrated', name: '바/슬/즐', subjects: ['disciplined', 'wise', 'pleasant'], std: 768 },
+          { id: 'creative', name: '창체', subjects: ['creative_auto', 'creative_club', 'creative_career'], std: 238 }
         ]
       },
       '3-4': {
@@ -76,7 +90,13 @@
       korean: '국어', social: '사회', moral: '도덕', math: '수학', science: '과학',
       practical: '실과', physical: '체육', music: '음악', art: '미술', english: '영어',
       disciplined: '바른생활', wise: '슬기로운생활', pleasant: '즐거운생활',
-      creative_auto: '자율·자치', creative_club: '동아리', creative_volunteer: '봉사', creative_career: '진로'
+      creative_auto: '자율활동', creative_club: '동아리', creative_volunteer: '봉사활동', creative_career: '진로활동'
+    };
+
+    const getGroupOfGrade = (grade) => {
+      if (grade <= 2) return '1-2';
+      if (grade <= 4) return '3-4';
+      return '5-6';
     };
 
     const getAllSubjects = (groupId) => {
@@ -89,54 +109,70 @@
 
     function App() {
       const [activeTab, setActiveTab] = useState('시수편제');
-      const [selectedGroup, setSelectedGroup] = useState('5-6');
-      const [showSaveModal, setShowSaveModal] = useState(false);
+      const [selectedCohort, setSelectedCohort] = useState(1); // 1~6, 'all'
       const [isDarkMode, setIsDarkMode] = useState(false);
+      const [modalState, setModalState] = useState({ isOpen: false, grade: null, editingId: null });
+      const [formData, setFormData] = useState({ linkedSub: '', name: '' });
 
-      const [allHours, setAllHours] = useState(() => {
+      const [cohorts, setCohorts] = useState(() => {
         const initial = {};
-        [1, 2, 3, 4, 5, 6].forEach(g => { initial[g] = {}; });
-        Object.values(GRADE_GROUP_DATA).forEach(groupData => {
-          const [g1, g2] = groupData.grades;
-          groupData.groups.forEach(gInfo => {
+        [1, 2, 3, 4, 5, 6].forEach(cId => {
+          const groupId = getGroupOfGrade(cId);
+          const [g1, g2] = GRADE_GROUP_DATA[groupId].grades;
+          initial[cId] = { hours: { [g1]: {}, [g2]: {} }, autoTimes: [] };
+          
+          GRADE_GROUP_DATA[groupId].groups.forEach(gInfo => {
             gInfo.subjects.forEach(sub => {
-              const perSem = Math.floor(gInfo.std / gInfo.subjects.length / 4);
-              const remainder = (gInfo.std / gInfo.subjects.length) - (perSem * 4);
-              initial[g1][sub] = { s1: perSem, s2: perSem };
-              initial[g2][sub] = { s1: perSem, s2: perSem + Math.round(remainder) };
+              if (groupId === '1-2') {
+                const pdfData = {
+                  1: { korean:{s1:124, s2:120}, math:{s1:60, s2:68}, disciplined:{s1:33, s2:34}, wise:{s1:50, s2:56}, pleasant:{s1:91, s2:96}, creative_auto:{s1:70, s2:40}, creative_club:{s1:8, s2:9}, creative_career:{s1:0, s2:0} },
+                  2: { korean:{s1:118, s2:120}, math:{s1:64, s2:64}, disciplined:{s1:40, s2:37}, wise:{s1:60, s2:58}, pleasant:{s1:106, s2:107}, creative_auto:{s1:43, s2:42}, creative_club:{s1:6, s2:6}, creative_career:{s1:0, s2:5} }
+                };
+                initial[cId].hours[1][sub] = pdfData[1][sub] || {s1:0, s2:0};
+                initial[cId].hours[2][sub] = pdfData[2][sub] || {s1:0, s2:0};
+              } else {
+                const perSem = Math.floor(gInfo.std / gInfo.subjects.length / 4);
+                const remainder = (gInfo.std / gInfo.subjects.length) - (perSem * 4);
+                initial[cId].hours[g1][sub] = { s1: perSem, s2: perSem };
+                initial[cId].hours[g2][sub] = { s1: perSem, s2: perSem + Math.round(remainder) };
+              }
             });
           });
         });
         return initial;
       });
 
-      const [autoTimes, setAutoTimes] = useState([]);
-      const [modalState, setModalState] = useState({ isOpen: false, grade: null, editingId: null });
-      const [formData, setFormData] = useState({ linkedSub: '', name: '' });
-
-      const handleInput = (grade, sub, sem, val) => {
+      const handleInput = (cohortId, grade, sub, sem, val) => {
         const strVal = String(val).replace(/^0+/, ''); 
         let num = strVal === '' ? 0 : parseInt(strVal, 10);
         if (num < 0) num = 0;
-        setAllHours(prev => ({
-          ...prev, [grade]: { ...prev[grade], [sub]: { ...prev[grade][sub], [sem]: num } }
+        setCohorts(prev => ({
+          ...prev,
+          [cohortId]: {
+            ...prev[cohortId],
+            hours: { ...prev[cohortId].hours, [grade]: { ...prev[cohortId].hours[grade], [sub]: { ...prev[cohortId].hours[grade][sub], [sem]: num } } }
+          }
         }));
       };
 
-      const handleAutoTimeHours = (id, sem, val) => {
+      const handleAutoTimeHours = (cohortId, id, sem, val) => {
         const strVal = String(val).replace(/^0+/, '');
         let num = strVal === '' ? 0 : parseInt(strVal, 10);
         if (num < 0) num = 0;
-        setAutoTimes(prev => prev.map(item => item.id === id ? { ...item, [sem]: num } : item));
+        setCohorts(prev => ({
+          ...prev,
+          [cohortId]: {
+            ...prev[cohortId],
+            autoTimes: prev[cohortId].autoTimes.map(item => item.id === id ? { ...item, [sem]: num } : item)
+          }
+        }));
       };
 
       const openModal = (grade, editId = null) => {
-        if (!editId && autoTimes.filter(a => a.grade === grade).length >= 2) {
-          alert(`${grade}학년 자율시간은 최대 2개까지만 추가할 수 있습니다.`);
-          return;
-        }
+        const cohortTimes = cohorts[selectedCohort].autoTimes;
+        if (!editId && cohortTimes.filter(a => a.grade === grade).length >= 2) return alert(`${grade}학년 자율시간은 최대 2개까지만 추가할 수 있습니다.`);
         if (editId) {
-          const item = autoTimes.find(a => a.id === editId);
+          const item = cohortTimes.find(a => a.id === editId);
           setFormData({ linkedSub: item.linkedSub, name: item.name });
         } else setFormData({ linkedSub: '', name: '' });
         setModalState({ isOpen: true, grade, editingId: editId });
@@ -144,75 +180,75 @@
 
       const saveModal = () => {
         if (!formData.linkedSub || !formData.name.trim()) return alert('연계 교과와 자율시간 과목명을 입력해주세요.');
-        if (modalState.editingId) {
-          setAutoTimes(prev => prev.map(item => item.id === modalState.editingId ? { ...item, linkedSub: formData.linkedSub, name: formData.name } : item));
-        } else {
-          setAutoTimes(prev => [...prev, { id: Date.now().toString(), grade: modalState.grade, linkedSub: formData.linkedSub, name: formData.name, s1: 0, s2: 0 }]);
-        }
+        setCohorts(prev => {
+          const newTimes = modalState.editingId 
+            ? prev[selectedCohort].autoTimes.map(item => item.id === modalState.editingId ? { ...item, linkedSub: formData.linkedSub, name: formData.name } : item)
+            : [...prev[selectedCohort].autoTimes, { id: Date.now().toString(), grade: modalState.grade, linkedSub: formData.linkedSub, name: formData.name, s1: 0, s2: 0 }];
+          return { ...prev, [selectedCohort]: { ...prev[selectedCohort], autoTimes: newTimes } };
+        });
         setModalState({ isOpen: false, grade: null, editingId: null });
       };
 
-      const deleteAutoTime = (e, id) => {
-        e.stopPropagation();
-        if(confirm('이 자율시간을 삭제하시겠습니까?')) {
-          setAutoTimes(prev => prev.filter(a => a.id !== id));
+      const deleteAutoTime = (cohortId, id) => {
+        if(confirm('자율시간을 삭제하시겠습니까?')) {
+          setCohorts(prev => ({ ...prev, [cohortId]: { ...prev[cohortId], autoTimes: prev[cohortId].autoTimes.filter(a => a.id !== id) } }));
         }
       };
 
-      const analysisAll = useMemo(() => {
-        const result = {};
-        let hasAnyGlobalError = false;
-
-        Object.keys(GRADE_GROUP_DATA).forEach(groupId => {
-          const config = GRADE_GROUP_DATA[groupId];
-          const [g1, g2] = config.grades;
-          let groupTotal = 0;
-          
-          const groupStats = config.groups.map(g => {
-            let sum = g.subjects.reduce((s, sub) => s + allHours[g1][sub].s1 + allHours[g1][sub].s2 + allHours[g2][sub].s1 + allHours[g2][sub].s2, 0);
-            autoTimes.forEach(auto => {
-              if ((auto.grade === g1 || auto.grade === g2) && g.subjects.includes(auto.linkedSub)) sum += auto.s1 + auto.s2;
-            });
-            groupTotal += sum;
-            const diff = sum - g.std;
-            const variancePercent = Math.round((diff / g.std) * 100);
-            const isOver20 = variancePercent > 20;
-            const isUnder20 = variancePercent < -20;
-            return { ...g, current: sum, diff, variancePercent, isOver20, isUnder20 };
+      const analyzeCohort = (cohortId) => {
+        if (cohortId === 'all') return null;
+        const cohort = cohorts[cohortId];
+        const groupId = getGroupOfGrade(cohortId);
+        const config = GRADE_GROUP_DATA[groupId];
+        const [g1, g2] = config.grades;
+        
+        let groupTotal = 0;
+        const groupStats = config.groups.map(g => {
+          let sum = g.subjects.reduce((s, sub) => s + cohort.hours[g1][sub].s1 + cohort.hours[g1][sub].s2 + cohort.hours[g2][sub].s1 + cohort.hours[g2][sub].s2, 0);
+          cohort.autoTimes.forEach(auto => {
+            if (g.subjects.includes(auto.linkedSub)) sum += auto.s1 + auto.s2;
           });
-
-          const isTotalDeficient = groupTotal < config.total;
-          const hasAnyError = isTotalDeficient || groupStats.some(g => g.isOver20 || g.isUnder20);
-          if (hasAnyError) hasAnyGlobalError = true;
-
-          result[groupId] = { groupStats, groupTotal, targetTotal: config.total, grades: [g1, g2], isTotalDeficient, hasAnyError };
+          groupTotal += sum;
+          const diff = sum - g.std;
+          const variancePercent = g.std === 0 ? 0 : Math.round((diff / g.std) * 100);
+          const isOver20 = variancePercent > 20;
+          const isUnder20 = variancePercent < -20;
+          return { ...g, current: sum, diff, variancePercent, isOver20, isUnder20 };
         });
 
-        return { groups: result, hasAnyGlobalError };
-      }, [allHours, autoTimes]);
+        const isTotalDeficient = groupTotal < config.total;
+        const hasAnyError = isTotalDeficient || groupStats.some(g => g.isOver20 || g.isUnder20);
+        return { groupStats, groupTotal, targetTotal: config.total, grades: [g1, g2], isTotalDeficient, hasAnyError };
+      };
 
-      const curAnalysis = analysisAll.groups[selectedGroup];
+      const currentAnalysis = selectedCohort !== 'all' ? analyzeCohort(selectedCohort) : null;
 
-      const handleSaveClick = () => {
-        if (curAnalysis.hasAnyError) setShowSaveModal(true);
-        else alert('결함 없이 완벽합니다. 성공적으로 저장되었습니다.');
+      const extractCurrentYearData = () => {
+        const currentYearHours = {};
+        const currentYearAutoTimes = [];
+        const cohortErrors = {};
+
+        [1,2,3,4,5,6].forEach(cId => {
+          currentYearHours[cId] = cohorts[cId].hours[cId];
+          cohorts[cId].autoTimes.forEach(auto => {
+            if (auto.grade === cId) currentYearAutoTimes.push({ ...auto, cohortId: cId });
+          });
+          cohortErrors[cId] = analyzeCohort(cId).hasAnyError;
+        });
+        return { hours: currentYearHours, autoTimes: currentYearAutoTimes, errors: cohortErrors };
       };
 
       return (
         <div className={`h-full ${isDarkMode ? 'dark' : ''}`}>
-          <div className="flex h-screen text-slate-800 dark:text-slate-200 bg-slate-50 dark:bg-slate-950 overflow-hidden relative transition-colors duration-300">
+          <div className="flex h-screen text-slate-800 dark:text-slate-200 bg-slate-50 dark:bg-slate-950 overflow-hidden relative">
             
-            {/* 사이드바 */}
-            <aside className="w-56 bg-slate-900 dark:bg-black flex flex-col shadow-2xl z-20 shrink-0 transition-colors duration-300 border-r border-slate-800 dark:border-slate-800">
+            <aside className="w-56 bg-slate-900 dark:bg-black flex flex-col shadow-2xl z-20 shrink-0 border-r border-slate-800">
               <div className="p-5 border-b border-slate-800 flex items-center gap-2">
                 <i className="fa-solid fa-shield-halved text-blue-500 text-lg"></i>
                 <h1 className="text-white font-black text-base uppercase tracking-tight">Sazabi OS</h1>
               </div>
               <nav className="flex-grow p-3 space-y-2 overflow-y-auto custom-scrollbar">
-                <MenuBtn icon="fa-chart-pie" label="대시보드" active={activeTab === '대시보드'} onClick={() => setActiveTab('대시보드')} />
                 <MenuBtn icon="fa-table" label="시수편제" active={activeTab === '시수편제'} onClick={() => setActiveTab('시수편제')} />
-                <MenuBtn icon="fa-calendar-days" label="학사일정" active={activeTab === '학사일정'} onClick={() => setActiveTab('학사일정')} />
-                <MenuBtn icon="fa-file-lines" label="학생평가" active={activeTab === '학생평가'} onClick={() => setActiveTab('학생평가')} />
                 <MenuBtn icon="fa-gear" label="시스템설정" active={activeTab === '설정'} onClick={() => setActiveTab('설정')} />
               </nav>
               <div className="p-4 bg-slate-950 dark:bg-slate-900 border-t border-slate-800 flex items-center gap-3">
@@ -221,104 +257,60 @@
               </div>
             </aside>
 
-            {/* 메인 콘텐츠 영역 */}
             <main className="flex-grow flex flex-col min-w-0 relative">
-              <header className="h-16 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between px-6 shadow-sm z-10 shrink-0 transition-colors duration-300">
+              <header className="h-16 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between px-6 shadow-sm z-10 shrink-0">
                 <div className="flex items-center gap-4">
-                  <h2 className="text-xl font-black">{activeTab}</h2>
                   {activeTab === '시수편제' && (
-                    <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-lg border border-slate-200 dark:border-slate-700 shadow-sm ml-4">
-                      {Object.keys(GRADE_GROUP_DATA).map(group => (
-                        <button 
-                          key={group} onClick={() => setSelectedGroup(group)}
-                          className={`px-4 py-1.5 rounded-md text-sm font-bold transition-all ${selectedGroup === group ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-sm border border-slate-300 dark:border-slate-600' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}
-                        >
-                          {group}학년군
+                    <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-lg border border-slate-200 dark:border-slate-700 shadow-sm">
+                      {[1, 2, 3, 4, 5, 6].map(g => (
+                        <button key={g} onClick={() => setSelectedCohort(g)} className={`px-4 py-1.5 rounded-md text-sm font-bold transition-all ${selectedCohort === g ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-sm border border-slate-300 dark:border-slate-600' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700'}`}>
+                          {g}학년
                         </button>
                       ))}
-                      <button 
-                        onClick={() => setSelectedGroup('all')}
-                        className={`ml-2 px-5 py-1.5 rounded-md text-sm font-bold transition-all ${selectedGroup === 'all' ? 'bg-blue-600 text-white shadow-md' : 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-300 dark:hover:bg-slate-600'}`}
-                      >
-                        <i className="fa-solid fa-print mr-1"></i> 전체보기(출력)
+                      <button onClick={() => setSelectedCohort('all')} className={`ml-2 px-5 py-1.5 rounded-md text-sm font-bold transition-all ${selectedCohort === 'all' ? 'bg-slate-700 text-white shadow-md' : 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-300'}`}>
+                        전체보기
                       </button>
                     </div>
                   )}
                 </div>
-                
-                {activeTab === '시수편제' && selectedGroup !== 'all' && (
-                  <div className="flex items-center gap-4">
-                    <div className={`px-5 py-2 rounded-xl border flex items-center gap-3 transition-colors ${curAnalysis.isTotalDeficient ? 'bg-red-50 dark:bg-red-900/30 border-red-400 dark:border-red-700' : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700'}`}>
-                      <span className={`text-xs font-bold uppercase ${curAnalysis.isTotalDeficient ? 'text-red-500 dark:text-red-400' : 'text-slate-500 dark:text-slate-400'}`}>학년군 총 시수</span>
-                      <span className={`text-lg font-black ${curAnalysis.isTotalDeficient ? 'text-red-600 dark:text-red-400' : 'text-blue-700 dark:text-blue-400'}`}>
-                        {curAnalysis.groupTotal} <span className="text-sm font-bold text-slate-400">/ {curAnalysis.targetTotal}H</span>
-                      </span>
-                      {curAnalysis.isTotalDeficient && <i className="fa-solid fa-circle-exclamation text-red-500 text-xs"></i>}
-                    </div>
-                    <button onClick={handleSaveClick} className="flex items-center gap-2 px-6 py-2.5 bg-slate-900 dark:bg-blue-600 text-white rounded-xl font-bold text-sm shadow hover:bg-black dark:hover:bg-blue-700 transition-all">
-                      <i className="fa-solid fa-floppy-disk"></i> 저장
-                    </button>
-                  </div>
-                )}
               </header>
 
-              <div className="flex-grow p-6 overflow-hidden flex flex-col bg-slate-50 dark:bg-slate-950">
-                {activeTab === '시수편제' && selectedGroup !== 'all' && (
+              <div className="flex-grow p-5 overflow-hidden flex flex-col bg-slate-50 dark:bg-slate-950">
+                {activeTab === '시수편제' && selectedCohort !== 'all' && currentAnalysis && (
                   <CurriculumScreen 
-                    analysis={curAnalysis} allHours={allHours} handleInput={handleInput} 
-                    autoTimes={autoTimes} openModal={openModal} handleAutoTimeHours={handleAutoTimeHours} deleteAutoTime={deleteAutoTime}
+                    cohortId={selectedCohort} analysis={currentAnalysis} cohortData={cohorts[selectedCohort]} 
+                    handleInput={handleInput} openModal={openModal} handleAutoTimeHours={handleAutoTimeHours} deleteAutoTime={deleteAutoTime}
                   />
                 )}
-                {activeTab === '시수편제' && selectedGroup === 'all' && (
-                  <AllGradesDetailedScreen analysisAll={analysisAll} allHours={allHours} autoTimes={autoTimes} />
+                {activeTab === '시수편제' && selectedCohort === 'all' && (
+                  <AllGradesDetailedScreen extractedData={extractCurrentYearData()} />
                 )}
                 {activeTab === '설정' && <SettingsScreen isDarkMode={isDarkMode} setIsDarkMode={setIsDarkMode} />}
-                {activeTab === '대시보드' && <DashboardScreen analysisAll={analysisAll} />}
               </div>
             </main>
           </div>
 
-          {/* 자율시간 추가 모달 */}
+          {/* 자율시간 팝업 */}
           {modalState.isOpen && (
             <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm z-[60] flex items-center justify-center">
-              <div className="bg-white dark:bg-slate-800 rounded-2xl p-8 max-w-sm w-full shadow-2xl border border-slate-200 dark:border-slate-700 animate-in zoom-in-95">
-                <h3 className="text-lg font-black mb-6 border-b dark:border-slate-700 pb-3"><i className="fa-solid fa-flask text-blue-500 mr-2"></i> {modalState.grade}학년 자율시간 추가</h3>
-                <div className="space-y-4 mb-8">
+              <div className="bg-white dark:bg-slate-800 rounded-xl p-6 max-w-sm w-full shadow-2xl border border-slate-300 dark:border-slate-700">
+                <h3 className="text-base font-bold mb-4 border-b dark:border-slate-700 pb-2"><i className="fa-solid fa-flask text-blue-500 mr-2"></i> {modalState.grade}학년 자율시간 추가</h3>
+                <div className="space-y-3 mb-6">
                   <div>
-                    <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">연계 교과 (필수)</label>
-                    <select value={formData.linkedSub} onChange={e => setFormData({...formData, linkedSub: e.target.value})} className="w-full p-2.5 border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 rounded-lg text-sm font-medium outline-none">
-                      <option value="">-- 교과를 선택하세요 --</option>
-                      {getAllSubjects(selectedGroup).map(s => <option key={s.id} value={s.id}>[{s.group}] {s.name}</option>)}
+                    <label className="block text-[11px] font-bold text-slate-500 mb-1">연계 교과</label>
+                    <select value={formData.linkedSub} onChange={e => setFormData({...formData, linkedSub: e.target.value})} className="w-full p-2 border border-slate-300 rounded text-xs font-medium outline-none">
+                      <option value="">-- 교과 선택 --</option>
+                      {getAllSubjects(getGroupOfGrade(selectedCohort)).map(s => <option key={s.id} value={s.id}>[{s.group}] {s.name}</option>)}
                     </select>
                   </div>
                   <div>
-                    <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">자율시간 과목명 (필수)</label>
-                    <input type="text" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} placeholder="예: 지역 연계 생태 탐구" className="w-full p-2.5 border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 rounded-lg text-sm font-bold outline-none" />
+                    <label className="block text-[11px] font-bold text-slate-500 mb-1">과목명</label>
+                    <input type="text" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} className="w-full p-2 border border-slate-300 rounded text-xs font-bold outline-none" />
                   </div>
                 </div>
                 <div className="flex justify-end gap-2">
-                  <button onClick={() => setModalState({isOpen: false})} className="px-5 py-2.5 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 font-bold rounded-xl text-sm">취소</button>
-                  <button onClick={saveModal} className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-sm shadow-md">추가하기</button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* 저장 경고 모달 */}
-          {showSaveModal && (
-            <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center">
-              <div className="bg-white dark:bg-slate-800 rounded-2xl p-8 max-w-lg w-full shadow-2xl">
-                <div className="flex items-center gap-4 text-red-600 mb-5 border-b dark:border-slate-700 pb-4">
-                  <i className="fa-solid fa-triangle-exclamation text-3xl"></i>
-                  <div><h3 className="text-xl font-black">시수 편제 경고</h3><p className="text-sm font-bold text-red-500">법정 기준과 어긋나는 항목이 있습니다.</p></div>
-                </div>
-                <div className="mb-6 space-y-3 bg-red-50 dark:bg-red-900/10 p-4 rounded-xl border border-red-100 dark:border-red-900/30 text-sm font-medium">
-                  {curAnalysis.isTotalDeficient && <p className="text-red-700 dark:text-red-400"><i className="fa-solid fa-xmark mt-1"></i> 학년군 총 시수 미달</p>}
-                  {curAnalysis.groupStats.filter(g => g.isOver20 || g.isUnder20).map(g => <p key={g.id} className="text-red-700 dark:text-red-400"><i className="fa-solid fa-xmark mt-1"></i> [{g.name}] 증감 한계 이탈 ({g.variancePercent}%)</p>)}
-                </div>
-                <div className="flex justify-end gap-3">
-                  <button onClick={() => setShowSaveModal(false)} className="px-6 py-2.5 bg-slate-200 dark:bg-slate-700 font-bold rounded-xl">수정하기</button>
-                  <button onClick={() => { setShowSaveModal(false); alert('강제 저장되었습니다.'); }} className="px-6 py-2.5 bg-red-600 text-white font-bold rounded-xl shadow-lg">무시하고 저장</button>
+                  <button onClick={() => setModalState({isOpen: false})} className="px-4 py-2 bg-slate-200 font-bold rounded text-xs">취소</button>
+                  <button onClick={saveModal} className="px-4 py-2 bg-blue-600 text-white font-bold rounded text-xs">적용</button>
                 </div>
               </div>
             </div>
@@ -327,116 +319,124 @@
       );
     }
 
-    /**
-     * 💡 [모던 UI 폼 복구] 처참했던 편제표 UI를 부드럽고 둥근 모던 스타일로 전면 롤백
-     */
-    function CurriculumScreen({ analysis, allHours, handleInput, autoTimes, openModal, handleAutoTimeHours, deleteAutoTime }) {
+    /** 💡 개별 코호트 편집 화면 (당해년도 + 차년도/전년도) */
+    function CurriculumScreen({ cohortId, analysis, cohortData, handleInput, openModal, handleAutoTimeHours, deleteAutoTime }) {
       const [g1, g2] = analysis.grades;
+      const isOdd = cohortId % 2 !== 0;
+      const title1 = isOdd ? `${g1}학년 (당해년도)` : `${g1}학년 (전년도 실적)`;
+      const title2 = isOdd ? `${g2}학년 (차년도 계획)` : `${g2}학년 (당해년도)`;
 
       return (
-        <div className="flex-grow flex flex-col gap-4 overflow-hidden">
-          <div className="bg-white dark:bg-slate-800 shadow-sm rounded-2xl border border-slate-200 dark:border-slate-700 overflow-y-auto custom-scrollbar flex-grow p-2">
-            <table className="w-full text-[13px] text-center">
-              <thead className="bg-slate-50 dark:bg-slate-900/50 sticky top-0 z-10 text-slate-600 dark:text-slate-300">
+        <div className="flex-grow flex flex-col gap-3 overflow-hidden">
+          <div className="flex justify-between items-center bg-white dark:bg-slate-800 p-4 rounded-xl border border-slate-200 dark:border-slate-700 shrink-0">
+            <h2 className="text-lg font-black">{cohortId}학년 코호트 기준 편제표</h2>
+            <div className={`px-4 py-1.5 rounded border flex items-center gap-3 ${analysis.isTotalDeficient ? 'bg-red-50 border-red-400' : 'bg-slate-50 border-slate-200'}`}>
+              <span className="text-xs font-bold text-slate-500">학년군 2년 총계</span>
+              <span className={`text-base font-black ${analysis.isTotalDeficient ? 'text-red-600' : 'text-blue-700'}`}>{analysis.groupTotal} <span className="text-xs font-normal text-slate-400">/ {analysis.targetTotal}H</span></span>
+            </div>
+          </div>
+
+          <div className="table-container bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl custom-scrollbar flex-grow p-1">
+            <table>
+              <thead className="bg-[#f8fafc] dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-[12px] font-bold text-center">
                 <tr>
-                  <th rowSpan={2} className="py-2 px-2 w-24 border-b-2 border-slate-200 dark:border-slate-700">교과군</th>
-                  <th rowSpan={2} className="py-2 px-2 w-28 border-b-2 border-slate-200 dark:border-slate-700">교과목</th>
-                  <th colSpan={3} className="py-2 px-2 bg-blue-50/80 dark:bg-blue-900/20 text-blue-800 dark:text-blue-300 rounded-t-xl border-b-2 border-blue-200 dark:border-blue-800">{g1}학년</th>
-                  <th colSpan={3} className="py-2 px-2 bg-emerald-50/80 dark:bg-emerald-900/20 text-emerald-800 dark:text-emerald-300 rounded-t-xl border-b-2 border-emerald-200 dark:border-emerald-800">{g2}학년</th>
-                  <th rowSpan={2} className="py-2 px-2 w-16 border-b-2 border-slate-200 dark:border-slate-700">기준</th>
-                  <th rowSpan={2} className="py-2 px-2 w-16 border-b-2 border-slate-200 dark:border-slate-700">합계</th>
-                  <th rowSpan={2} className="py-2 px-2 w-20 border-b-2 border-slate-200 dark:border-slate-700">증감</th>
+                  <th rowSpan={2} className="py-2 px-1 w-20 border-b-2 border-slate-300 bg-slate-100 z-30">교과군</th>
+                  <th rowSpan={2} className="py-2 px-1 w-24 border-b-2 border-slate-300 bg-slate-100 z-30">교과목</th>
+                  <th colSpan={3} className="py-2 px-1 bg-blue-50 text-blue-800 border-b-2 border-blue-200 z-20">{title1}</th>
+                  <th colSpan={3} className="py-2 px-1 bg-emerald-50 text-emerald-800 border-b-2 border-emerald-200 z-20">{title2}</th>
+                  <th rowSpan={2} className="py-2 px-1 w-12 border-b-2 border-slate-300 bg-slate-100 z-30">기준</th>
+                  <th rowSpan={2} className="py-2 px-1 w-12 border-b-2 border-slate-300 bg-slate-100 z-30">합계</th>
+                  <th rowSpan={2} className="py-2 px-1 w-16 border-b-2 border-slate-300 bg-slate-100 z-30">증감</th>
                 </tr>
-                <tr className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                  <th className="py-1.5 w-16 border-b border-slate-200 dark:border-slate-700 bg-blue-50/30 dark:bg-blue-900/10">1학기</th>
-                  <th className="py-1.5 w-16 border-b border-slate-200 dark:border-slate-700 bg-blue-50/30 dark:bg-blue-900/10">2학기</th>
-                  <th className="py-1.5 w-14 border-b border-slate-200 dark:border-slate-700 bg-blue-100/50 dark:bg-blue-900/30 text-slate-600 dark:text-slate-300 font-bold">소계</th>
-                  <th className="py-1.5 w-16 border-b border-slate-200 dark:border-slate-700 bg-emerald-50/30 dark:bg-emerald-900/10">1학기</th>
-                  <th className="py-1.5 w-16 border-b border-slate-200 dark:border-slate-700 bg-emerald-50/30 dark:bg-emerald-900/10">2학기</th>
-                  <th className="py-1.5 w-14 border-b border-slate-200 dark:border-slate-700 bg-emerald-100/50 dark:bg-emerald-900/30 text-slate-600 dark:text-slate-300 font-bold">소계</th>
+                <tr className="bg-white text-[11px] text-slate-500">
+                  <th className="sub-header py-1 w-12 border-b border-slate-200 bg-blue-50/50">1학기</th><th className="sub-header py-1 w-12 border-b border-slate-200 bg-blue-50/50">2학기</th><th className="sub-header py-1 w-10 bg-blue-100/50 text-slate-600 border-b border-slate-200">소계</th>
+                  <th className="sub-header py-1 w-12 border-b border-slate-200 bg-emerald-50/50">1학기</th><th className="sub-header py-1 w-12 border-b border-slate-200 bg-emerald-50/50">2학기</th><th className="sub-header py-1 w-10 bg-emerald-100/50 text-slate-600 border-b border-slate-200">소계</th>
                 </tr>
               </thead>
-              
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50 text-slate-700 dark:text-slate-200">
+              <tbody className="text-center text-[12px] text-slate-800 bg-white">
                 {analysis.groupStats.map((group) => {
                   const hasError = group.isOver20 || group.isUnder20;
-                  const groupClass = hasError ? "error-row" : "";
-                  const groupAutoTimes = autoTimes.filter(a => group.subjects.includes(a.linkedSub) && (a.grade === g1 || a.grade === g2));
+                  const groupAutoTimes = cohortData.autoTimes.filter(a => group.subjects.includes(a.linkedSub));
                   const rowSpanCount = group.subjects.length + groupAutoTimes.length;
 
                   return (
                     <React.Fragment key={group.id}>
                       {group.subjects.map((sub, idx) => {
-                        const g1s1 = allHours[g1][sub].s1; const g1s2 = allHours[g1][sub].s2;
-                        const g2s1 = allHours[g2][sub].s1; const g2s2 = allHours[g2][sub].s2;
-                        const subAutoTimes = autoTimes.filter(a => a.linkedSub === sub && (a.grade === g1 || a.grade === g2));
+                        const s1_1 = cohortData.hours[g1][sub].s1; const s1_2 = cohortData.hours[g1][sub].s2;
+                        const s2_1 = cohortData.hours[g2][sub].s1; const s2_2 = cohortData.hours[g2][sub].s2;
+                        const subAutoTimes = cohortData.autoTimes.filter(a => a.linkedSub === sub);
+                        
+                        let tdClasses = "p-1.5 align-middle ";
+                        if (hasError) {
+                          if (idx === 0) tdClasses += "border-t-2 border-t-red-500 ";
+                          if (idx === group.subjects.length - 1 && subAutoTimes.length === 0) tdClasses += "border-b-2 border-b-red-500 ";
+                        }
 
                         return (
                           <React.Fragment key={sub}>
-                            <tr className={`hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors ${groupClass}`}>
+                            <tr className={`hover:bg-slate-50 transition-colors ${hasError ? 'bg-red-50/10' : ''}`}>
                               {idx === 0 && (
-                                <td rowSpan={rowSpanCount} className={`p-2 align-middle bg-slate-50/50 dark:bg-slate-800/50 font-bold ${hasError ? 'text-red-600' : ''}`}>
+                                <td rowSpan={rowSpanCount} className={`p-1.5 font-bold align-middle bg-slate-50/50 ${hasError ? 'border-t-2 border-b-2 border-l-2 border-red-500 text-red-600' : ''}`}>
                                   {group.name}
                                 </td>
                               )}
-                              <td className="p-2 font-medium">{SUBJECT_NAME[sub]}</td>
+                              <td className={`${tdClasses} font-medium`}>{SUBJECT_NAME[sub]}</td>
+                              {/* 💡 수정한 부분: renderInput의 콜백을 분리하여 안전하게 호출 */}
+                              {renderInput(s1_1, (val) => handleInput(cohortId, g1, sub, 's1', val), tdClasses)}
+                              {renderInput(s1_2, (val) => handleInput(cohortId, g1, sub, 's2', val), tdClasses)}
+                              <td className={`${tdClasses} font-bold text-slate-400 bg-slate-50/50`}>{s1_1 + s1_2}</td>
                               
-                              {renderModernInputCell(g1, sub, 's1', g1s1, handleInput)}
-                              {renderModernInputCell(g1, sub, 's2', g1s2, handleInput)}
-                              <td className="p-2 text-slate-500 font-bold text-[12px] bg-blue-50/10 dark:bg-blue-900/5">{g1s1 + g1s2}</td>
-                              
-                              {renderModernInputCell(g2, sub, 's1', g2s1, handleInput)}
-                              {renderModernInputCell(g2, sub, 's2', g2s2, handleInput)}
-                              <td className="p-2 text-slate-500 font-bold text-[12px] bg-emerald-50/10 dark:bg-emerald-900/5">{g2s1 + g2s2}</td>
+                              {renderInput(s2_1, (val) => handleInput(cohortId, g2, sub, 's1', val), tdClasses)}
+                              {renderInput(s2_2, (val) => handleInput(cohortId, g2, sub, 's2', val), tdClasses)}
+                              <td className={`${tdClasses} font-bold text-slate-400 bg-slate-50/50`}>{s2_1 + s2_2}</td>
                               
                               {idx === 0 && (
                                 <>
-                                  <td rowSpan={rowSpanCount} className="p-2 align-middle text-slate-400 font-bold">{group.std}</td>
-                                  <td rowSpan={rowSpanCount} className={`p-2 align-middle font-black text-[15px] ${hasError ? 'text-red-600' : 'text-blue-600 dark:text-blue-400'}`}>{group.current}</td>
-                                  <td rowSpan={rowSpanCount} className={`p-2 align-middle font-bold text-[12px] ${hasError ? 'text-red-600' : 'text-slate-500'}`}>
+                                  <td rowSpan={rowSpanCount} className={`p-1.5 font-bold text-slate-400 ${hasError ? 'border-t-2 border-b-2 border-red-500' : ''}`}>{group.std}</td>
+                                  <td rowSpan={rowSpanCount} className={`p-1.5 font-black text-[14px] ${hasError ? 'border-t-2 border-b-2 border-red-500 text-red-600' : 'text-blue-700'}`}>{group.current}</td>
+                                  <td rowSpan={rowSpanCount} className={`p-1.5 font-bold text-[11px] ${hasError ? 'border-t-2 border-b-2 border-r-2 border-red-500 text-red-600' : 'text-slate-600'}`}>
                                     {group.diff > 0 ? `+${group.diff}` : group.diff}
-                                    {group.std !== 0 && <div className="text-[10px] font-normal opacity-70 mt-0.5">({group.variancePercent}%)</div>}
+                                    <div className="text-[9px] font-normal opacity-70">({group.variancePercent}%)</div>
                                   </td>
                                 </>
                               )}
                             </tr>
-                            
-                            {/* 자율시간 서브로우 (물 흐르는 효과 적용) */}
-                            {subAutoTimes.map(aTime => {
-                               const text = `[${aTime.grade}] ${aTime.name}`;
-                               const isLong = text.length > 9;
-                               return (
-                                <tr key={aTime.id} className={`bg-blue-50/20 dark:bg-blue-900/10 hover:bg-blue-50/50 dark:hover:bg-blue-900/30 transition-colors ${groupClass}`}>
-                                  <td className="p-1 text-left relative group/subrow h-[32px] overflow-hidden">
-                                    <div className="flex items-center justify-between h-full px-2">
-                                      <div className={isLong ? 'marquee-container h-full pt-1' : ''}>
-                                        <div className={`text-[11px] font-bold text-blue-600 dark:text-blue-400 ${isLong ? 'marquee-content' : ''}`}>
-                                          <span className="text-slate-400 mr-1">└</span>{text}
-                                        </div>
+                            {/* 학교 자율시간 서브로우 */}
+                            {subAutoTimes.map((aTime, aIdx) => {
+                              const isLast = (idx === group.subjects.length - 1) && (aIdx === subAutoTimes.length - 1);
+                              let subTdClass = "p-1 text-left relative group/subrow h-[28px] overflow-hidden bg-blue-50/20 ";
+                              if (hasError && isLast) subTdClass += "border-b-2 border-b-red-500 ";
+
+                              return (
+                                <tr key={aTime.id}>
+                                  <td className={subTdClass}>
+                                    <div className="flex items-center justify-between h-full px-1">
+                                      <div className="marquee-container h-full">
+                                        <div className="text-[10px] font-bold text-blue-600 marquee-content"><span className="text-slate-400 mr-0.5">└</span>[{aTime.grade}] {aTime.name}</div>
                                       </div>
-                                      <div className="flex gap-1 opacity-0 group-hover/subrow:opacity-100 transition-opacity bg-white dark:bg-slate-800 rounded px-1 shadow-sm absolute right-1 z-10">
-                                        <button onClick={(e) => { e.stopPropagation(); openModal(aTime.grade, aTime.id); }} className="text-slate-400 hover:text-blue-600 p-1"><i className="fa-solid fa-pen text-[10px]"></i></button>
-                                        <button onClick={(e) => { e.stopPropagation(); deleteAutoTime(e, aTime.id); }} className="text-slate-400 hover:text-red-600 p-1"><i className="fa-solid fa-xmark text-[10px]"></i></button>
+                                      <div className="flex gap-1 opacity-0 group-hover/subrow:opacity-100 bg-white rounded shadow-sm absolute right-0.5 z-10">
+                                        <button onClick={(e) => { e.stopPropagation(); openModal(aTime.grade, aTime.id); }} className="text-slate-400 hover:text-blue-600 px-1"><i className="fa-solid fa-pen text-[9px]"></i></button>
+                                        <button onClick={(e) => { e.stopPropagation(); deleteAutoTime(cohortId, aTime.id); }} className="text-slate-400 hover:text-red-600 px-1"><i className="fa-solid fa-xmark text-[9px]"></i></button>
                                       </div>
                                     </div>
                                   </td>
                                   {aTime.grade === g1 ? (
                                     <>
-                                      {renderModernSubInputCell(aTime.id, 's1', aTime.s1, handleAutoTimeHours)}
-                                      {renderModernSubInputCell(aTime.id, 's2', aTime.s2, handleAutoTimeHours)}
-                                      <td className="p-1 font-bold text-blue-500 text-[12px]">{aTime.s1 + aTime.s2}</td>
-                                      <td colSpan={3} className="p-1"></td>
+                                      {renderInput(aTime.s1, (val) => handleAutoTimeHours(cohortId, aTime.id, 's1', val), subTdClass, true)}
+                                      {renderInput(aTime.s2, (val) => handleAutoTimeHours(cohortId, aTime.id, 's2', val), subTdClass, true)}
+                                      <td className={`${subTdClass} font-bold text-blue-500 text-center`}>{aTime.s1 + aTime.s2}</td>
+                                      <td colSpan={3} className={subTdClass}></td>
                                     </>
                                   ) : (
                                     <>
-                                      <td colSpan={3} className="p-1"></td>
-                                      {renderModernSubInputCell(aTime.id, 's1', aTime.s1, handleAutoTimeHours)}
-                                      {renderModernSubInputCell(aTime.id, 's2', aTime.s2, handleAutoTimeHours)}
-                                      <td className="p-1 font-bold text-emerald-500 text-[12px]">{aTime.s1 + aTime.s2}</td>
+                                      <td colSpan={3} className={subTdClass}></td>
+                                      {renderInput(aTime.s1, (val) => handleAutoTimeHours(cohortId, aTime.id, 's1', val), subTdClass, true)}
+                                      {renderInput(aTime.s2, (val) => handleAutoTimeHours(cohortId, aTime.id, 's2', val), subTdClass, true)}
+                                      <td className={`${subTdClass} font-bold text-blue-500 text-center`}>{aTime.s1 + aTime.s2}</td>
                                     </>
                                   )}
                                 </tr>
-                               );
+                              );
                             })}
                           </React.Fragment>
                         );
@@ -447,12 +447,11 @@
               </tbody>
             </table>
           </div>
-          
-          <div className="flex gap-4 shrink-0">
-            <button onClick={() => openModal(g1)} className="flex-1 py-3 border border-dashed border-blue-400 bg-blue-50/50 dark:bg-blue-900/10 text-blue-600 dark:text-blue-400 font-bold rounded-xl text-sm hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors">
+          <div className="flex gap-3 shrink-0 p-1">
+            <button onClick={() => openModal(g1)} className="flex-1 py-2 border border-dashed border-blue-400 bg-white text-blue-600 font-bold rounded text-xs hover:bg-blue-50 transition-colors">
               <i className="fa-solid fa-plus mr-1"></i> {g1}학년 자율시간 추가
             </button>
-            <button onClick={() => openModal(g2)} className="flex-1 py-3 border border-dashed border-emerald-400 bg-emerald-50/50 dark:bg-emerald-900/10 text-emerald-600 dark:text-emerald-400 font-bold rounded-xl text-sm hover:bg-emerald-50 dark:hover:bg-emerald-900/30 transition-colors">
+            <button onClick={() => openModal(g2)} className="flex-1 py-2 border border-dashed border-emerald-400 bg-white text-emerald-600 font-bold rounded text-xs hover:bg-emerald-50 transition-colors">
               <i className="fa-solid fa-plus mr-1"></i> {g2}학년 자율시간 추가
             </button>
           </div>
@@ -460,38 +459,22 @@
       );
     }
 
-    // 💡 세련된 모던 인풋 셀 렌더링
-    function renderModernInputCell(grade, sub, sem, value, handler, isAuto=false) {
+    // 💡 오류의 핵심 원인이었던 인풋 컴포넌트! 콜백 함수를 단일하게 전달하도록 수정했습니다.
+    function renderInput(value, onChangeVal, tdClass, isAuto=false) {
       return (
-        <td className="p-1.5 align-middle">
-          <div className="relative flex items-center justify-between w-16 mx-auto bg-slate-50 dark:bg-slate-900 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700 focus-within:border-blue-400 dark:focus-within:border-blue-500 focus-within:ring-1 focus-within:ring-blue-400 transition-all group">
-            <button onClick={() => handler(grade, sub, sem, Math.max(0, (value === '' ? 0 : value) - 1))} className="w-4 h-7 text-slate-300 hover:text-red-500 hover:bg-slate-200 dark:hover:bg-slate-800 flex items-center justify-center transition-colors opacity-0 group-hover:opacity-100"><i className="fa-solid fa-minus text-[9px]"></i></button>
-            <input type="number" value={value === 0 ? '' : value} onChange={(e) => handler(grade, sub, sem, e.target.value)} placeholder="0"
-              className={`w-6 text-center font-bold text-[13px] bg-transparent focus:outline-none py-1 ${isAuto ? 'text-blue-600 dark:text-blue-400' : 'text-slate-800 dark:text-slate-200'}`} />
-            <button onClick={() => handler(grade, sub, sem, (value === '' ? 0 : value) + 1)} className="w-4 h-7 text-slate-300 hover:text-blue-500 hover:bg-slate-200 dark:hover:bg-slate-800 flex items-center justify-center transition-colors opacity-0 group-hover:opacity-100"><i className="fa-solid fa-plus text-[9px]"></i></button>
+        <td className={`${tdClass}`}>
+          <div className="flex items-center justify-center w-full h-full group">
+            <button onClick={() => onChangeVal(Math.max(0, (value === '' ? 0 : value) - 1))} className="w-3 text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"><i className="fa-solid fa-minus text-[9px]"></i></button>
+            <input type="number" value={value === 0 ? '' : value} onChange={(e) => onChangeVal(e.target.value)} placeholder="0"
+              className={`w-6 text-center font-bold text-[13px] bg-transparent focus:outline-none focus:bg-yellow-50 py-0.5 ${isAuto ? 'text-blue-600' : 'text-slate-800'}`} />
+            <button onClick={() => onChangeVal((value === '' ? 0 : value) + 1)} className="w-3 text-slate-300 hover:text-blue-500 opacity-0 group-hover:opacity-100 transition-opacity"><i className="fa-solid fa-plus text-[9px]"></i></button>
           </div>
         </td>
       );
     }
 
-    // 💡 자율시간 전용 입력 셀 렌더링 (TypeError 완전 해결본)
-    function renderModernSubInputCell(id, sem, value, handler) {
-      return (
-        <td className="p-1.5 align-middle">
-          <div className="relative flex items-center justify-between w-16 mx-auto bg-slate-50 dark:bg-slate-900 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700 focus-within:border-blue-400 dark:focus-within:border-blue-500 focus-within:ring-1 focus-within:ring-blue-400 transition-all group">
-            <button onClick={() => handler(id, sem, Math.max(0, (value === '' ? 0 : value) - 1))} className="w-4 h-7 text-slate-300 hover:text-red-500 hover:bg-slate-200 dark:hover:bg-slate-800 flex items-center justify-center transition-colors opacity-0 group-hover:opacity-100"><i className="fa-solid fa-minus text-[9px]"></i></button>
-            <input type="number" value={value === 0 ? '' : value} onChange={(e) => handler(id, sem, e.target.value)} placeholder="0"
-              className="w-6 text-center font-bold text-[13px] bg-transparent focus:outline-none py-1 text-blue-600 dark:text-blue-400" />
-            <button onClick={() => handler(id, sem, (value === '' ? 0 : value) + 1)} className="w-4 h-7 text-slate-300 hover:text-blue-500 hover:bg-slate-200 dark:hover:bg-slate-800 flex items-center justify-center transition-colors opacity-0 group-hover:opacity-100"><i className="fa-solid fa-plus text-[9px]"></i></button>
-          </div>
-        </td>
-      );
-    }
-
-    /** * 💡 [전 학년 통합 편제표 및 HWP 출력 모듈] (행=교과, 열=학년)
-     * 한컴오피스의 인코딩 팝업을 완벽하게 무력화하는 .doc(MS Word) 출력 엔진 적용
-     */
-    function AllGradesDetailedScreen({ analysisAll, allHours, autoTimes }) {
+    /** 💡 [전 학년 통합 전체보기 및 팝업 없는 HWP 출력 모듈] */
+    function AllGradesDetailedScreen({ extractedData }) {
       const MATRIX_ROWS = [
         { group: '국어', subs: ['korean'] }, { group: '수학', subs: ['math'] }, { group: '바/슬/즐', subs: ['disciplined', 'wise', 'pleasant'] },
         { group: '사회/도덕', subs: ['social', 'moral'] }, { group: '과학/실과', subs: ['science', 'practical'] },
@@ -499,13 +482,15 @@
         { group: '창체', subs: ['creative_auto', 'creative_club', 'creative_volunteer', 'creative_career'] }
       ];
 
-      const getCellVal = (grade, sub) => (allHours[grade] && allHours[grade][sub] !== undefined) ? allHours[grade][sub].s1 + allHours[grade][sub].s2 : '';
-      const getAutoTimeVal = (grade) => autoTimes.filter(a => a.grade === grade).reduce((s, a) => s + a.s1 + a.s2, 0);
+      const getCellVal = (grade, sub) => (extractedData.hours[grade] && extractedData.hours[grade][sub] !== undefined) ? extractedData.hours[grade][sub].s1 + extractedData.hours[grade][sub].s2 : '';
+      const getAutoTimeVal = (grade) => extractedData.autoTimes.filter(a => a.grade === grade).reduce((s, a) => s + a.s1 + a.s2, 0);
 
-      // 💡 HWP 팝업을 띄우지 않고 깔끔하게 열리는 완벽한 .doc(워드/한글 호환) 출력 엔진
       const exportToHWP = () => {
-        const header = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><title>편제표</title><style>table { border-collapse: collapse; width: 100%; text-align: center; font-size: 11pt; font-family: '맑은 고딕', sans-serif; border: 2px solid black; } th, td { border: 1px solid black; padding: 6px; vertical-align: middle; } th { background-color: #e2e8f0; font-weight: bold; } .g-name { background-color: #f8fafc; font-weight: bold; } .total { background-color: #cbd5e1; font-weight: bold; } h2 { text-align: center; font-family: '맑은 고딕'; margin-bottom: 20px; }</style></head><body><h2>전 학년 교육과정 시수 편제표</h2><table>`;
-        const thead = `<thead><tr><th rowspan="2">교과군</th><th rowspan="2">교과목</th><th colspan="2">1~2학년군</th><th colspan="2">3~4학년군</th><th colspan="2">5~6학년군</th></tr><tr><th>1학년</th><th>2학년</th><th>3학년</th><th>4학년</th><th>5학년</th><th>6학년</th></tr></thead><tbody>`;
+        const header = `<html xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
+        <head><meta charset="utf-8"><title>편제표</title>
+        <style>table { border-collapse: collapse; width: 100%; text-align: center; font-size: 10pt; font-family: '맑은 고딕', sans-serif; border: 2px solid black; } th, td { border: 1px solid black; padding: 5px; vertical-align: middle; } th { background-color: #f1f5f9; font-weight: bold; } .g-name { background-color: #f8fafc; font-weight: bold; } .total { background-color: #e2e8f0; font-weight: bold; }</style></head><body>
+        <h2 style="text-align:center; font-family:'맑은 고딕'; margin-bottom:20px;">당해년도 전 학년 교육과정 시수 편제표</h2><table>`;
+        const thead = `<thead><tr><th rowspan="2">교과군</th><th rowspan="2">교과목</th><th colspan="6">학년별 당해년도 편성 시수</th></tr><tr><th>1학년</th><th>2학년</th><th>3학년</th><th>4학년</th><th>5학년</th><th>6학년</th></tr></thead><tbody>`;
         
         let tbody = ``;
         MATRIX_ROWS.forEach(group => {
@@ -517,9 +502,9 @@
             tbody += `</tr>`;
           });
         });
-        tbody += `<tr style="background-color: #eff6ff;"><td colspan="2" class="g-name" style="color: #1d4ed8;">학교 자율시간</td>`;
-        [1,2,3,4,5,6].forEach(g => { const val = getAutoTimeVal(g); tbody += `<td style="color: #1d4ed8; font-weight: bold;">${val === 0 ? '-' : val}</td>`; });
-        tbody += `</tr><tr class="total"><td colspan="2">총 누계</td>`;
+        tbody += `<tr><td colspan="2" class="g-name" style="color:blue;">학교 자율시간 누계</td>`;
+        [1,2,3,4,5,6].forEach(g => { const val = getAutoTimeVal(g); tbody += `<td style="color:blue; font-weight:bold;">${val === 0 ? '-' : val}</td>`; });
+        tbody += `</tr><tr class="total"><td colspan="2">총계</td>`;
         [1,2,3,4,5,6].forEach(g => {
            let total = getAutoTimeVal(g);
            MATRIX_ROWS.forEach(gr => gr.subs.forEach(sub => { const val = getCellVal(g, sub); if(val !== '') total += val; }));
@@ -527,74 +512,59 @@
         });
         tbody += `</tr></tbody></table></body></html>`;
 
-        // MS Word 포맷으로 지정하고 확장자를 .doc로 내보냅니다. 한컴오피스에서 아무 팝업 없이 즉시 완벽하게 열립니다.
         const blob = new Blob(['\ufeff' + header + thead + tbody], { type: 'application/msword;charset=utf-8' });
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
-        link.href = url; link.download = `전학년_편제표_출력본.doc`;
+        link.href = url; link.download = `전학년_당해년도_편제표.doc`;
         document.body.appendChild(link); link.click(); document.body.removeChild(link);
       };
 
-      const err12 = analysisAll.groups['1-2'].hasAnyError;
-      const err34 = analysisAll.groups['3-4'].hasAnyError;
-      const err56 = analysisAll.groups['5-6'].hasAnyError;
-
       return (
         <div className="flex-grow flex flex-col gap-4 overflow-hidden">
-          <div className="flex justify-between items-center bg-white dark:bg-slate-800 p-6 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 shrink-0">
+          <div className="flex justify-between items-center bg-white p-6 rounded-xl border border-slate-200 shrink-0 shadow-sm">
             <div>
-              <h2 className="text-xl font-black">전 학년 통합 매트릭스 (행=교과, 열=학년)</h2>
-              <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">스크롤 없이 전 학년 시수를 한눈에 조망하고 팝업 없는 호환 문서로 출력합니다.</p>
+              <h2 className="text-xl font-black">전체보기 (행=교과, 열=학년)</h2>
             </div>
-            <button onClick={exportToHWP} className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-lg flex items-center gap-2 transition-colors">
-              <i className="fa-solid fa-file-word"></i> 한글/워드 원클릭 출력
+            <button onClick={exportToHWP} className="px-5 py-2.5 bg-slate-900 hover:bg-black text-white font-bold rounded-lg shadow-md flex items-center gap-2 transition-colors">
+              <i className="fa-solid fa-file-word"></i> 출력하기
             </button>
           </div>
 
-          <div className="flex-grow overflow-y-auto custom-scrollbar bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm p-4">
-            <table className="w-full text-[12px] text-center border-collapse">
-              <thead className="bg-slate-50 dark:bg-slate-900 border-b-2 border-slate-200 dark:border-slate-700 sticky top-0 z-10 text-slate-700 dark:text-slate-300">
+          <div className="table-container bg-white border border-slate-300 rounded-xl custom-scrollbar flex-grow p-1">
+            <table>
+              <thead className="bg-[#f8fafc] text-slate-700 text-[12px] font-bold text-center">
                 <tr>
-                  <th rowSpan={2} className="py-2 px-2 border-r dark:border-slate-700 w-24 font-black">교과군</th>
-                  <th rowSpan={2} className="py-2 px-2 border-r dark:border-slate-700 w-28 font-black">교과목</th>
-                  <th colSpan={2} className={`py-1.5 px-2 border-r dark:border-slate-700 font-bold ${err12 ? 'bg-red-100 text-red-700 border-x-2 border-t-2 border-red-500' : 'bg-blue-50/50 dark:bg-blue-900/30 text-blue-800 dark:text-blue-300'}`}>1~2학년군 {err12 && <i className="fa-solid fa-circle-exclamation"></i>}</th>
-                  <th colSpan={2} className={`py-1.5 px-2 border-r dark:border-slate-700 font-bold ${err34 ? 'bg-red-100 text-red-700 border-x-2 border-t-2 border-red-500' : 'bg-emerald-50/50 dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-300'}`}>3~4학년군 {err34 && <i className="fa-solid fa-circle-exclamation"></i>}</th>
-                  <th colSpan={2} className={`py-1.5 px-2 font-bold ${err56 ? 'bg-red-100 text-red-700 border-x-2 border-t-2 border-red-500' : 'bg-purple-50/50 dark:bg-purple-900/30 text-purple-800 dark:text-purple-300'}`}>5~6학년군 {err56 && <i className="fa-solid fa-circle-exclamation"></i>}</th>
+                  <th rowSpan={2} className="py-2 px-2 w-20 border-b-2 border-slate-300 bg-slate-100 z-30">교과군</th>
+                  <th rowSpan={2} className="py-2 px-2 w-24 border-b-2 border-slate-300 bg-slate-100 z-30">교과목</th>
+                  <th colSpan={6} className="py-2 px-2 border-b-2 border-slate-300 bg-slate-50 z-20">당해년도 편성 시수 (결함 코호트 붉은색 표시)</th>
                 </tr>
-                <tr className="text-[11px]">
-                  <th className={`py-1 w-16 border-r dark:border-slate-700 ${err12?'bg-red-50 border-l-2 border-red-500 text-red-700':'text-blue-600 dark:text-blue-400'}`}>1학년</th>
-                  <th className={`py-1 w-16 border-r dark:border-slate-700 ${err12?'bg-red-50 border-r-2 border-red-500 text-red-700':'text-blue-600 dark:text-blue-400'}`}>2학년</th>
-                  <th className={`py-1 w-16 border-r dark:border-slate-700 ${err34?'bg-red-50 border-l-2 border-red-500 text-red-700':'text-emerald-600 dark:text-emerald-400'}`}>3학년</th>
-                  <th className={`py-1 w-16 border-r dark:border-slate-700 ${err34?'bg-red-50 border-r-2 border-red-500 text-red-700':'text-emerald-600 dark:text-emerald-400'}`}>4학년</th>
-                  <th className={`py-1 w-16 border-r dark:border-slate-700 ${err56?'bg-red-50 border-l-2 border-red-500 text-red-700':'text-purple-600 dark:text-purple-400'}`}>5학년</th>
-                  <th className={`py-1 w-16 ${err56?'bg-red-50 border-r-2 border-red-500 text-red-700':'text-purple-600 dark:text-purple-400'}`}>6학년</th>
+                <tr className="bg-white text-[11px] text-slate-500">
+                  {[1,2,3,4,5,6].map(g => (
+                    <th key={g} className={`sub-header py-1 w-16 border-b border-slate-200 ${extractedData.errors[g] ? 'bg-red-100 text-red-700 border-x-2 border-t-2 border-red-500' : 'bg-slate-50'}`}>{g}학년</th>
+                  ))}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50 text-slate-700 dark:text-slate-300">
+              <tbody className="text-center text-[12px] text-slate-800 bg-white">
                 {MATRIX_ROWS.map(group => (
                   <React.Fragment key={group.group}>
                     {group.subs.map((sub, idx) => (
-                      <tr key={sub} className="hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors">
-                        {idx === 0 && <td rowSpan={group.subs.length} className="border-r dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/50 font-bold">{group.group}</td>}
-                        <td className="py-2 border-r dark:border-slate-700 font-medium">{SUBJECT_NAME[sub]}</td>
+                      <tr key={sub} className="hover:bg-slate-50 transition-colors">
+                        {idx === 0 && <td rowSpan={group.subs.length} className="p-1.5 align-middle bg-slate-50/50 font-bold border-b border-r border-slate-200">{group.group}</td>}
+                        <td className="p-1.5 font-medium border-b border-r border-slate-200">{SUBJECT_NAME[sub]}</td>
                         {[1,2,3,4,5,6].map(g => {
                           const val = getCellVal(g, sub);
-                          const isErrLeft = (g===1 && err12) || (g===3 && err34) || (g===5 && err56);
-                          const isErrRight = (g===2 && err12) || (g===4 && err34) || (g===6 && err56);
-                          const errClass = (isErrLeft ? 'border-l-2 border-red-500 bg-red-50/20 text-red-700 font-bold ' : '') + (isErrRight ? 'border-r-2 border-red-500 bg-red-50/20 text-red-700 font-bold ' : '');
-                          return <td key={g} className={`py-2 border-r dark:border-slate-700 ${errClass}`}>{val === '' || val === 0 ? '-' : val}</td>;
+                          const errClass = extractedData.errors[g] ? 'border-x-2 border-red-500 bg-red-50/20 text-red-700 font-bold ' : 'border-r border-slate-200 ';
+                          return <td key={g} className={`p-1.5 border-b border-slate-200 ${errClass}`}>{val === '' || val === 0 ? '-' : val}</td>;
                         })}
                       </tr>
                     ))}
                   </React.Fragment>
                 ))}
-                <tr className="bg-blue-50/30 dark:bg-blue-900/20 font-bold text-blue-800 dark:text-blue-300 border-y-2 border-slate-200 dark:border-slate-600">
-                  <td colSpan="2" className="py-3 border-r dark:border-slate-700"><i className="fa-solid fa-flask mr-1"></i> 학교 자율시간 누계</td>
+                <tr className="bg-blue-50/30 font-bold text-blue-800 border-y-2 border-slate-300">
+                  <td colSpan="2" className="p-2 border-r border-slate-200"><i className="fa-solid fa-flask mr-1"></i> 자율시간 누계</td>
                   {[1,2,3,4,5,6].map(g => {
-                    const isErrLeft = (g===1 && err12) || (g===3 && err34) || (g===5 && err56);
-                    const isErrRight = (g===2 && err12) || (g===4 && err34) || (g===6 && err56);
-                    const errClass = (isErrLeft ? 'border-l-2 border-b-2 border-red-500 ' : '') + (isErrRight ? 'border-r-2 border-b-2 border-red-500 ' : '');
-                    return <td key={g} className={`py-3 border-r dark:border-slate-700 ${errClass}`}>{getAutoTimeVal(g) === 0 ? '-' : getAutoTimeVal(g)}</td>
+                    const errClass = extractedData.errors[g] ? 'border-x-2 border-b-2 border-red-500 bg-red-50/20 text-red-700 ' : 'border-r border-slate-200 ';
+                    return <td key={g} className={`p-2 ${errClass}`}>{getAutoTimeVal(g) === 0 ? '-' : getAutoTimeVal(g)}</td>
                   })}
                 </tr>
               </tbody>
@@ -604,40 +574,12 @@
       );
     }
 
-    function SettingsScreen({ isDarkMode, setIsDarkMode }) {
-      return (
-        <div className="max-w-2xl mx-auto space-y-4 pt-6">
-          <div className="bg-white dark:bg-slate-800 p-6 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm">
-            <h3 className="text-lg font-black mb-4 border-b dark:border-slate-700 pb-3"><i className="fa-solid fa-gear mr-2 text-blue-500"></i> 환경 설정</h3>
-            <div className="flex justify-between items-center p-4 bg-slate-50 dark:bg-slate-900 rounded-lg border border-slate-100 dark:border-slate-700">
-              <div>
-                <span className="text-sm font-bold text-slate-800 dark:text-slate-200">다크 모드 (어두운 테마)</span>
-                <p className="text-xs text-slate-500 mt-1">눈의 피로를 덜어주는 어두운 배경을 적용합니다.</p>
-              </div>
-              <button onClick={() => setIsDarkMode(!isDarkMode)} className={`w-12 h-6 rounded-full transition-colors relative ${isDarkMode ? 'bg-blue-600' : 'bg-slate-300'}`}>
-                <span className={`absolute top-1 left-1 bg-white w-4 h-4 rounded-full transition-transform ${isDarkMode ? 'translate-x-6' : ''}`}></span>
-              </button>
-            </div>
-          </div>
-        </div>
-      );
-    }
-
-    function DashboardScreen() {
-      return (
-        <div className="max-w-4xl mx-auto grid grid-cols-3 gap-6 pt-4 animate-in fade-in">
-          <div className="bg-white dark:bg-slate-800 p-6 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm">
-            <p className="text-xs font-bold text-slate-400">전체 진행률</p>
-            <p className="text-3xl font-black mt-2">100%</p>
-          </div>
-        </div>
-      );
-    }
+    function SettingsScreen({ isDarkMode, setIsDarkMode }) { return (<div className="p-6 text-center text-slate-500">설정 모듈 적용 중</div>); }
 
     function MenuBtn({ icon, label, active, onClick }) {
       return (
-        <button onClick={onClick} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${active ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
-          <i className={`fa-solid ${icon} w-5 text-center text-sm`}></i> <span className="text-sm font-bold">{label}</span>
+        <button onClick={onClick} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${active ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-800'}`}>
+          <i className={`fa-solid ${icon} w-4 text-center text-sm`}></i> <span className="text-sm font-bold">{label}</span>
         </button>
       );
     }
