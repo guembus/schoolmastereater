@@ -4,23 +4,20 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Sazabi Master OS</title>
-  <!-- Tailwind CSS: 꽉 차는 레이아웃을 위한 핵심 도구 -->
   <script src="https://cdn.tailwindcss.com"></script>
-  <!-- FontAwesome: 아이콘 -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-  <!-- React & Babel -->
   <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <style>
     body, html { font-family: 'Pretendard', -apple-system, sans-serif; height: 100%; margin: 0; overflow: hidden; }
-    /* 숫자를 입력할 때 브라우저 기본 화살표(스피너)를 없애서 깔끔하게 만듭니다. */
+    /* 브라우저 기본 숫자 스피너 제거 */
     input[type=number]::-webkit-inner-spin-button, 
     input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
-    /* 테이블 스크롤바 디자인 (데스크톱 앱 느낌) */
-    .custom-scrollbar::-webkit-scrollbar { width: 8px; height: 8px; }
-    .custom-scrollbar::-webkit-scrollbar-track { background: #f1f5f9; }
-    .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+    /* 커스텀 스크롤바 */
+    .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
+    .custom-scrollbar::-webkit-scrollbar-track { background: #f8fafc; }
+    .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
     .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
   </style>
 </head>
@@ -31,8 +28,9 @@
     const { useState, useMemo } = React;
 
     /**
-     * [2022 개정 교육과정 총론 기준 데이터]
-     * 학년군 단위로 묶인 정확한 기준 시수 데이터입니다.
+     * [2022 개정 교육과정 반영 데이터]
+     * 1. 창의적 체험활동 세분화 (자율·자치, 동아리, 진로)
+     * 2. 학교 자율시간 추가 (기준 0시간, 커스터마이징 가능)
      */
     const GRADE_GROUP_DATA = {
       '1-2': {
@@ -41,7 +39,8 @@
           { id: 'korean', name: '국어', subjects: ['korean'], std: 442 },
           { id: 'math', name: '수학', subjects: ['math'], std: 256 },
           { id: 'integrated', name: '바/슬/즐', subjects: ['disciplined', 'wise', 'pleasant'], std: 738 },
-          { id: 'creative', name: '창체', subjects: ['creative'], std: 264 }
+          { id: 'creative', name: '창체', subjects: ['creative_auto', 'creative_club'], std: 264 },
+          { id: 'school_auto', name: '학교 자율시간', subjects: ['school_auto_sub'], std: 0 }
         ]
       },
       '3-4': {
@@ -54,7 +53,8 @@
           { id: 'physical', name: '체육', subjects: ['physical'], std: 204 },
           { id: 'arts', name: '예술(음/미)', subjects: ['music', 'art'], std: 272 },
           { id: 'english', name: '영어', subjects: ['english'], std: 136 },
-          { id: 'creative', name: '창체', subjects: ['creative'], std: 204 }
+          { id: 'creative', name: '창체', subjects: ['creative_auto', 'creative_club', 'creative_career'], std: 204 },
+          { id: 'school_auto', name: '학교 자율시간', subjects: ['school_auto_sub'], std: 0 }
         ]
       },
       '5-6': {
@@ -67,7 +67,8 @@
           { id: 'physical', name: '체육', subjects: ['physical'], std: 204 },
           { id: 'arts', name: '예술(음/미)', subjects: ['music', 'art'], std: 272 },
           { id: 'english', name: '영어', subjects: ['english'], std: 204 },
-          { id: 'creative', name: '창체', subjects: ['creative'], std: 204 }
+          { id: 'creative', name: '창체', subjects: ['creative_auto', 'creative_club', 'creative_career'], std: 204 },
+          { id: 'school_auto', name: '학교 자율시간', subjects: ['school_auto_sub'], std: 0 }
         ]
       }
     };
@@ -75,14 +76,16 @@
     const SUBJECT_NAME = {
       korean: '국어', social: '사회', moral: '도덕', math: '수학', science: '과학',
       practical: '실과', physical: '체육', music: '음악', art: '미술', english: '영어',
-      disciplined: '바른생활', wise: '슬기로운생활', pleasant: '즐거운생활', creative: '창체'
+      disciplined: '바른생활', wise: '슬기로운생활', pleasant: '즐거운생활',
+      creative_auto: '자율·자치', creative_club: '동아리', creative_career: '진로',
+      school_auto_sub: '자율/연계 교과'
     };
 
     function App() {
       const [activeTab, setActiveTab] = useState('시수편제');
       const [selectedGroup, setSelectedGroup] = useState('5-6');
+      const [showSaveModal, setShowSaveModal] = useState(false);
       
-      // 전 학년 시수 데이터 상태
       const [allHours, setAllHours] = useState(() => {
         const initial = {};
         [1, 2, 3, 4, 5, 6].forEach(g => { initial[g] = {}; });
@@ -92,8 +95,8 @@
           const g2 = groupData.grades[1];
           groupData.groups.forEach(gInfo => {
             gInfo.subjects.forEach(sub => {
-              const perSem = Math.floor(gInfo.std / gInfo.subjects.length / 4);
-              const remainder = (gInfo.std / gInfo.subjects.length) - (perSem * 4);
+              const perSem = gInfo.std === 0 ? 0 : Math.floor(gInfo.std / gInfo.subjects.length / 4);
+              const remainder = gInfo.std === 0 ? 0 : (gInfo.std / gInfo.subjects.length) - (perSem * 4);
               initial[g1][sub] = { s1: perSem, s2: perSem };
               initial[g2][sub] = { s1: perSem, s2: perSem + Math.round(remainder) };
             });
@@ -102,16 +105,14 @@
         return initial;
       });
 
-      // 입력 핸들러: 숫자 입력 및 +/- 버튼 클릭 모두 처리
       const handleInput = (grade, sub, sem, val) => {
-        const num = Math.max(0, parseInt(val) || 0); // 음수 방지
+        const num = Math.max(0, parseInt(val) || 0);
         setAllHours(prev => ({
           ...prev,
           [grade]: { ...prev[grade], [sub]: { ...prev[grade][sub], [sem]: num } }
         }));
       };
 
-      // 💡 무결성 및 증감 검증 엔진
       const analysis = useMemo(() => {
         const config = GRADE_GROUP_DATA[selectedGroup];
         const g1 = config.grades[0];
@@ -124,7 +125,7 @@
           , 0);
           groupTotal += sum;
           const diff = sum - g.std;
-          const variancePercent = Math.round((diff / g.std) * 100);
+          const variancePercent = g.std === 0 ? 0 : Math.round((diff / g.std) * 100);
           
           const isOver20 = variancePercent > 20;
           const isUnder20 = variancePercent < -20;
@@ -133,14 +134,22 @@
         });
 
         const isTotalDeficient = groupTotal < config.total;
+        const hasAnyError = isTotalDeficient || groupStats.some(g => g.isOver20 || g.isUnder20);
 
-        return { groupStats, groupTotal, targetTotal: config.total, grades: [g1, g2], isTotalDeficient };
+        return { groupStats, groupTotal, targetTotal: config.total, grades: [g1, g2], isTotalDeficient, hasAnyError };
       }, [allHours, selectedGroup]);
 
+      const handleSaveClick = () => {
+        if (analysis.hasAnyError) {
+          setShowSaveModal(true);
+        } else {
+          alert('결함 없이 완벽합니다. 성공적으로 저장되었습니다.');
+        }
+      };
+
       return (
-        <div className="flex h-screen text-slate-800 overflow-hidden">
+        <div className="flex h-screen text-slate-800 overflow-hidden relative">
           
-          {/* 사이드바 */}
           <aside className="w-56 bg-slate-900 flex flex-col shadow-2xl z-20 shrink-0">
             <div className="p-5 border-b border-slate-800">
               <div className="flex items-center gap-2">
@@ -148,7 +157,7 @@
                 <h1 className="text-white font-black text-base uppercase tracking-tight">Sazabi OS</h1>
               </div>
             </div>
-            <nav className="flex-grow p-3 space-y-1 overflow-y-auto">
+            <nav className="flex-grow p-3 space-y-1 overflow-y-auto custom-scrollbar">
               <MenuBtn icon="fa-chart-pie" label="대시보드" active={activeTab === '대시보드'} onClick={() => setActiveTab('대시보드')} />
               <MenuBtn icon="fa-calculator" label="시수편제" active={activeTab === '시수편제'} onClick={() => setActiveTab('시수편제')} />
               <MenuBtn icon="fa-calendar-days" label="학사일정" active={activeTab === '학사일정'} onClick={() => setActiveTab('학사일정')} />
@@ -158,13 +167,11 @@
             </nav>
             <div className="p-4 bg-slate-950 border-t border-slate-800 flex items-center gap-3">
               <i className="fa-solid fa-user text-slate-400 text-sm"></i>
-              <span className="text-slate-300 text-xs font-bold">사자비 교무부장</span>
+              <span className="text-slate-300 text-xs font-bold">사자비 부장</span>
             </div>
           </aside>
 
-          {/* 메인 콘텐츠 영역 */}
-          <main className="flex-grow flex flex-col min-w-0 bg-slate-50">
-            {/* 상단바: 고정 높이 */}
+          <main className="flex-grow flex flex-col min-w-0 bg-slate-50 relative">
             <header className="h-16 bg-white border-b flex items-center justify-between px-6 shadow-sm z-10 shrink-0">
               <div className="flex items-center gap-6">
                 <h2 className="text-lg font-black text-slate-800">{activeTab}</h2>
@@ -184,21 +191,21 @@
               
               {activeTab === '시수편제' && (
                 <div className="flex items-center gap-4">
-                  <div className={`px-5 py-2 rounded-xl border-2 flex items-center gap-3 ${analysis.isTotalDeficient ? 'bg-red-50 border-red-300 animate-pulse' : 'bg-slate-50 border-transparent'}`}>
-                    <span className="text-xs font-bold uppercase text-slate-500">학년군 총 시수</span>
-                    <span className={`text-lg font-black ${analysis.isTotalDeficient ? 'text-red-600' : 'text-green-600'}`}>
+                  {/* 💡 붉은색 점멸: 학년군 총 시수가 미달일 때 */}
+                  <div className={`px-5 py-2 rounded-xl border-2 flex items-center gap-3 transition-colors duration-300 ${analysis.isTotalDeficient ? 'bg-red-50 border-red-500 animate-pulse shadow-[0_0_15px_rgba(239,68,68,0.4)]' : 'bg-slate-50 border-slate-200'}`}>
+                    <span className={`text-xs font-bold uppercase ${analysis.isTotalDeficient ? 'text-red-500' : 'text-slate-500'}`}>학년군 총 시수</span>
+                    <span className={`text-lg font-black ${analysis.isTotalDeficient ? 'text-red-700' : 'text-green-600'}`}>
                       {analysis.groupTotal} / {analysis.targetTotal}H
                     </span>
-                    {analysis.isTotalDeficient && <span className="text-xs text-red-600 font-bold bg-red-100 px-2 py-0.5 rounded-full"><i className="fa-solid fa-circle-exclamation"></i> 미달</span>}
+                    {analysis.isTotalDeficient && <span className="text-xs text-white font-bold bg-red-600 px-2 py-0.5 rounded-full shadow-sm"><i className="fa-solid fa-triangle-exclamation"></i> 미달</span>}
                   </div>
-                  <button className="flex items-center gap-2 px-6 py-2.5 bg-slate-900 text-white rounded-xl font-bold text-sm shadow-md hover:bg-black transition-all">
+                  <button onClick={handleSaveClick} className="flex items-center gap-2 px-6 py-2.5 bg-slate-900 text-white rounded-xl font-bold text-sm shadow-md hover:bg-black transition-all">
                     <i className="fa-solid fa-floppy-disk"></i> 저장
                   </button>
                 </div>
               )}
             </header>
 
-            {/* 💡 창 크기에 맞춰 꽉 차는 영역 (flex-grow overflow-hidden) */}
             <div className="flex-grow p-6 overflow-hidden flex flex-col">
               {activeTab === '시수편제' && (
                 <CurriculumScreen analysis={analysis} allHours={allHours} handleInput={handleInput} />
@@ -211,15 +218,45 @@
                 </div>
               )}
             </div>
+
+            {/* 💡 경고 팝업 모달 */}
+            {showSaveModal && (
+              <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center">
+                <div className="bg-white rounded-2xl p-8 max-w-lg w-full shadow-2xl border border-slate-200">
+                  <div className="flex items-center gap-4 text-red-600 mb-5 border-b border-slate-100 pb-4">
+                    <i className="fa-solid fa-triangle-exclamation text-3xl"></i>
+                    <div>
+                      <h3 className="text-xl font-black text-slate-900">시수 편제 경고</h3>
+                      <p className="text-sm font-bold text-red-500">법정 기준과 어긋나는 항목이 있습니다.</p>
+                    </div>
+                  </div>
+                  <div className="mb-6 space-y-3 bg-slate-50 p-4 rounded-xl border border-slate-100 text-sm font-medium">
+                    {analysis.isTotalDeficient && (
+                      <p className="text-red-600 flex items-start gap-2">
+                        <i className="fa-solid fa-xmark mt-1"></i> 학년군 총 시수가 법정 기준({analysis.targetTotal}시간)에 미달합니다.
+                      </p>
+                    )}
+                    {analysis.groupStats.filter(g => g.isOver20 || g.isUnder20).map(g => (
+                      <p key={g.id} className="text-rose-600 flex items-start gap-2">
+                        <i className="fa-solid fa-xmark mt-1"></i> [{g.name}] 교과군의 증감 한계(±20%)를 이탈했습니다. ({g.variancePercent}%)
+                      </p>
+                    ))}
+                  </div>
+                  <p className="text-sm text-slate-600 font-bold text-center mb-6">
+                    문제가 발생할 수 있습니다. 이대로 강제 저장하시겠습니까?
+                  </p>
+                  <div className="flex justify-center gap-3">
+                    <button onClick={() => setShowSaveModal(false)} className="px-6 py-2.5 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold rounded-xl transition-colors">취소 및 수정</button>
+                    <button onClick={() => { setShowSaveModal(false); alert('현 상태로 강제 저장되었습니다.'); }} className="px-6 py-2.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl shadow-lg shadow-red-200 transition-colors">무시하고 강제 저장</button>
+                  </div>
+                </div>
+              </div>
+            )}
           </main>
         </div>
       );
     }
 
-    /**
-     * [자동 꽉참(Fluid) 편제표 컴포넌트]
-     * 창 크기를 늘리면 표도 같이 늘어납니다. 스크롤바는 표 내부에만 생기도록 처리했습니다.
-     */
     function CurriculumScreen({ analysis, allHours, handleInput }) {
       const g1 = analysis.grades[0];
       const g2 = analysis.grades[1];
@@ -229,24 +266,24 @@
           <div className="overflow-y-auto custom-scrollbar flex-grow">
             <table className="w-full border-collapse h-full">
               <thead className="bg-slate-100 border-b-2 border-slate-300 sticky top-0 z-10">
-                <tr className="text-sm font-bold text-slate-600 text-center">
+                <tr className="text-[13px] font-bold text-slate-600 text-center">
                   <th className="py-2 px-3 border-r w-24">교과군</th>
                   <th className="py-2 px-3 border-r w-24">교과목</th>
                   <th colSpan={3} className="py-2 px-3 border-r bg-blue-50 text-blue-800">{g1}학년</th>
                   <th colSpan={3} className="py-2 px-3 border-r bg-emerald-50 text-emerald-800">{g2}학년</th>
                   <th className="py-2 px-3 border-r w-20">기준</th>
                   <th className="py-2 px-3 border-r w-20">합계</th>
-                  <th className="py-2 px-3 w-24">증감(%)</th>
+                  <th className="py-2 px-3 w-20">증감(%)</th>
                 </tr>
-                <tr className="text-xs font-medium text-slate-500 text-center bg-white border-b border-slate-200">
+                <tr className="text-[11px] font-bold text-slate-500 text-center bg-white border-b border-slate-200 shadow-sm">
                   <th className="py-1.5 border-r"></th>
                   <th className="py-1.5 border-r"></th>
-                  <th className="py-1.5 border-r w-20">1학기</th>
-                  <th className="py-1.5 border-r w-20">2학기</th>
-                  <th className="py-1.5 border-r w-16 bg-slate-50 font-bold">소계</th>
-                  <th className="py-1.5 border-r w-20">1학기</th>
-                  <th className="py-1.5 border-r w-20">2학기</th>
-                  <th className="py-1.5 border-r w-16 bg-slate-50 font-bold">소계</th>
+                  <th className="py-1.5 border-r w-[4.5rem]">1학기</th>
+                  <th className="py-1.5 border-r w-[4.5rem]">2학기</th>
+                  <th className="py-1.5 border-r w-14 bg-slate-50 text-slate-400">소계</th>
+                  <th className="py-1.5 border-r w-[4.5rem]">1학기</th>
+                  <th className="py-1.5 border-r w-[4.5rem]">2학기</th>
+                  <th className="py-1.5 border-r w-14 bg-slate-50 text-slate-400">소계</th>
                   <th className="py-1.5 border-r"></th>
                   <th className="py-1.5 border-r"></th>
                   <th className="py-1.5"></th>
@@ -254,11 +291,7 @@
               </thead>
               <tbody className="divide-y divide-slate-200 text-center text-sm">
                 {analysis.groupStats.map((group) => {
-                  // 💡 정확한 힌트 로직:
-                  // 1. 해당 교과군이 20% 초과면 -> 전체 칸에 [-] 힌트
-                  // 2. 해당 교과군이 20% 미만이거나, '총 시수'가 부족한데 이 과목은 20%를 넘지 않았다면 -> 전체 칸에 [+] 힌트
-                  const showMinusHint = group.isOver20;
-                  const showPlusHint = group.isUnder20 || (analysis.isTotalDeficient && !group.isOver20);
+                  const hasError = group.isOver20 || group.isUnder20;
 
                   return (
                     <React.Fragment key={group.id}>
@@ -271,33 +304,34 @@
                         const subTotal2 = g2s1 + g2s2;
 
                         return (
-                          <tr key={sub} className="hover:bg-slate-50 transition-colors">
+                          <tr key={sub} className="hover:bg-slate-50/80 transition-colors">
+                            {/* 💡 붉은색 점멸: 교과군 증감이 20%를 넘을 때 테두리 점멸 */}
                             {idx === 0 && (
-                              <td rowSpan={group.subjects.length} className="p-3 border-r align-middle bg-slate-50/80">
-                                <span className="font-bold text-slate-700 leading-tight">{group.name}</span>
+                              <td rowSpan={group.subjects.length} className={`p-2 border-r align-middle bg-slate-50/50 transition-all ${hasError ? 'border-l-4 border-l-red-500 bg-red-50/30' : ''}`}>
+                                <span className={`font-bold leading-tight ${hasError ? 'text-red-700' : 'text-slate-700'}`}>{group.name}</span>
                               </td>
                             )}
-                            <td className="p-3 border-r font-bold text-slate-800">{SUBJECT_NAME[sub]}</td>
+                            <td className="p-2 border-r font-bold text-slate-700 text-xs">{SUBJECT_NAME[sub]}</td>
                             
-                            {/* 입력 셀 렌더링 (사자비 님 요청: +/- 버튼 추가) */}
-                            {renderInputCell(g1, sub, 's1', g1s1, handleInput, showPlusHint, showMinusHint)}
-                            {renderInputCell(g1, sub, 's2', g1s2, handleInput, showPlusHint, showMinusHint)}
-                            <td className="p-3 border-r font-bold text-slate-400 bg-slate-50/50">{subTotal1}</td>
+                            {/* 💡 우측 삼각형 스피너가 적용된 입력 셀 */}
+                            {renderInputCell(g1, sub, 's1', g1s1, handleInput)}
+                            {renderInputCell(g1, sub, 's2', g1s2, handleInput)}
+                            <td className="p-2 border-r font-bold text-slate-400 bg-slate-50/50 text-xs">{subTotal1}</td>
 
-                            {renderInputCell(g2, sub, 's1', g2s1, handleInput, showPlusHint, showMinusHint)}
-                            {renderInputCell(g2, sub, 's2', g2s2, handleInput, showPlusHint, showMinusHint)}
-                            <td className="p-3 border-r font-bold text-slate-400 bg-slate-50/50">{subTotal2}</td>
+                            {renderInputCell(g2, sub, 's1', g2s1, handleInput)}
+                            {renderInputCell(g2, sub, 's2', g2s2, handleInput)}
+                            <td className="p-2 border-r font-bold text-slate-400 bg-slate-50/50 text-xs">{subTotal2}</td>
 
-                            {/* 💡 에러 시 붉은색 칠하기 */}
+                            {/* 💡 합계 및 증감 영역 붉은색 점멸 처리 */}
                             {idx === 0 && (
                               <>
-                                <td rowSpan={group.subjects.length} className="p-3 border-r align-middle bg-slate-50 text-slate-500 font-bold">{group.std}</td>
-                                <td rowSpan={group.subjects.length} className={`p-3 border-r align-middle font-black text-lg ${group.isOver20 || group.isUnder20 ? 'bg-red-50 text-red-600' : 'bg-blue-50/30 text-blue-800'}`}>
+                                <td rowSpan={group.subjects.length} className={`p-2 border-r align-middle text-slate-400 font-bold ${hasError ? 'bg-red-50/30' : ''}`}>{group.std}</td>
+                                <td rowSpan={group.subjects.length} className={`p-2 border-r align-middle font-black text-base transition-colors ${hasError ? 'bg-red-50 text-red-600 border-2 border-red-500 animate-pulse shadow-[inset_0_0_8px_rgba(239,68,68,0.3)]' : 'bg-blue-50/30 text-blue-800'}`}>
                                   {group.current}
                                 </td>
-                                <td rowSpan={group.subjects.length} className={`p-3 align-middle font-bold ${group.isOver20 || group.isUnder20 ? 'bg-red-50 text-red-600' : 'text-slate-500'}`}>
+                                <td rowSpan={group.subjects.length} className={`p-2 align-middle font-bold text-xs transition-colors ${hasError ? 'bg-red-50 text-red-600 border-y-2 border-r-2 border-red-500' : 'text-slate-500'}`}>
                                   {group.diff > 0 ? `+${group.diff}` : group.diff}
-                                  <div className="text-xs font-normal opacity-70 mt-0.5">({group.variancePercent}%)</div>
+                                  {group.std !== 0 && <div className="text-[10px] font-medium opacity-70 mt-0.5">({group.variancePercent}%)</div>}
                                 </td>
                               </>
                             )}
@@ -314,40 +348,37 @@
       );
     }
 
-    // [보조] 입력창과 +/- 버튼을 렌더링하는 컴포넌트
-    function renderInputCell(grade, sub, sem, value, handler, showPlus, showMinus) {
+    // 💡 숫자 입력칸 + 우측 스피너(화살표) 컴포넌트
+    function renderInputCell(grade, sub, sem, value, handler) {
       return (
-        <td className="p-2 border-r relative align-middle">
-          {/* 플렉스를 사용해 버튼과 입력창을 꽉 차게 배치합니다. */}
-          <div className="flex items-center justify-center gap-1 max-w-[100px] mx-auto">
-            <button 
-              onClick={() => handler(grade, sub, sem, value - 1)} 
-              className="w-7 h-7 shrink-0 flex items-center justify-center bg-slate-100 hover:bg-slate-200 rounded text-slate-500 transition-colors"
-            >
-              <i className="fa-solid fa-minus text-[10px]"></i>
-            </button>
+        <td className="py-1 px-1.5 border-r align-middle">
+          <div className="relative flex items-center justify-center w-16 mx-auto border border-slate-200 rounded overflow-hidden shadow-sm bg-white hover:border-blue-400 transition-colors">
             <input 
               type="number" 
               value={value} 
               onChange={(e) => handler(grade, sub, sem, e.target.value)}
-              className="w-10 text-center font-bold text-base focus:bg-yellow-50 focus:outline-none focus:ring-2 focus:ring-blue-400 rounded py-1" 
+              className="w-full text-center font-bold text-sm focus:outline-none focus:bg-yellow-50 py-1 pr-4 pl-1" 
             />
-            <button 
-              onClick={() => handler(grade, sub, sem, value + 1)} 
-              className="w-7 h-7 shrink-0 flex items-center justify-center bg-slate-100 hover:bg-slate-200 rounded text-slate-500 transition-colors"
-            >
-              <i className="fa-solid fa-plus text-[10px]"></i>
-            </button>
+            {/* 우측 상하 화살표 (스피너) */}
+            <div className="absolute right-0 top-0 bottom-0 w-4 flex flex-col border-l border-slate-200 bg-slate-50">
+              <button 
+                onClick={() => handler(grade, sub, sem, value + 1)} 
+                className="h-1/2 w-full text-slate-400 hover:bg-slate-200 hover:text-blue-600 flex items-center justify-center leading-none transition-colors border-b border-slate-200"
+              >
+                <i className="fa-solid fa-caret-up text-[10px]"></i>
+              </button>
+              <button 
+                onClick={() => handler(grade, sub, sem, value - 1)} 
+                className="h-1/2 w-full text-slate-400 hover:bg-slate-200 hover:text-blue-600 flex items-center justify-center leading-none transition-colors"
+              >
+                <i className="fa-solid fa-caret-down text-[10px]"></i>
+              </button>
+            </div>
           </div>
-          
-          {/* 힌트 아이콘 표시 (셀의 우측 상단에 띄움) */}
-          {showPlus && <i className="fa-solid fa-circle-plus absolute right-1.5 top-1.5 text-blue-500 text-xs animate-bounce pointer-events-none drop-shadow-md"></i>}
-          {showMinus && <i className="fa-solid fa-circle-minus absolute right-1.5 top-1.5 text-red-500 text-xs animate-bounce pointer-events-none drop-shadow-md"></i>}
         </td>
       );
     }
 
-    // 대시보드 유지
     function DashboardScreen() {
       return (
         <div className="max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-6 animate-in fade-in h-full">
@@ -361,13 +392,12 @@
           </div>
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 border-l-4 border-l-red-500 h-40">
             <p className="text-xs font-bold text-slate-400 uppercase">시스템 알림</p>
-            <p className="text-sm font-bold text-red-600 mt-4"><i className="fa-solid fa-circle-exclamation mr-1"></i> 5-6학년군 총 시수 미달</p>
+            <p className="text-sm font-bold text-red-600 mt-4"><i className="fa-solid fa-triangle-exclamation mr-1"></i> 법정 시수 결함 감지됨</p>
           </div>
         </div>
       );
     }
 
-    // 사이드바 버튼
     function MenuBtn({ icon, label, active, onClick }) {
       return (
         <button onClick={onClick} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${active ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
@@ -376,7 +406,6 @@
       );
     }
 
-    // React 랜더링
     const root = ReactDOM.createRoot(document.getElementById('root'));
     root.render(<App />);
   </script>
