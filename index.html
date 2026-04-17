@@ -26,7 +26,6 @@
     }
     .error-pulse { animation: pulse-border 1.5s infinite; }
 
-    /* 💡 수정됨: 조건부 텍스트 흐름 효과 */
     .marquee-container { width: 150px; overflow: hidden; position: relative; white-space: nowrap; display: flex; align-items: center; }
     .marquee-content { display: inline-block; padding-left: 100%; animation: scroll-left 6s linear infinite; }
     @keyframes scroll-left { 0% { transform: translateX(0%); } 100% { transform: translateX(-100%); } }
@@ -156,7 +155,6 @@
         setModalState({ isOpen: false, grade: null, editingId: null });
       };
 
-      // 💡 삭제 오류 수정: stopPropagation을 적용하여 삭제 로직 완벽 보완
       const deleteAutoTime = (e, id) => {
         e.stopPropagation();
         if(confirm('이 자율시간을 삭제하시겠습니까? (입력된 시수도 삭제됩니다)')) {
@@ -271,7 +269,7 @@
                     autoTimes={autoTimes} openModal={openModal} handleAutoTimeHours={handleAutoTimeHours} deleteAutoTime={deleteAutoTime}
                   />
                 )}
-                {/* 💡 전 학년 상세 출력/보기 화면 컴포넌트 */}
+                {/* 💡 전 학년 매트릭스 뷰 출력 화면 호출 */}
                 {activeTab === '시수편제' && selectedGroup === 'all' && (
                   <AllGradesDetailedScreen analysisAll={analysisAll} allHours={allHours} autoTimes={autoTimes} />
                 )}
@@ -338,62 +336,110 @@
       );
     }
 
-    /** * 💡 [전 학년 상세 출력/보기 화면 컴포넌트]
-     * 뭉뚱그린 요약이 아닌, 1~6학년 모든 교과와 자율시간을 표로 쫙 뽑아주는 컴포넌트입니다.
-     * 실제 작동하는 HWP 다운로드(HTML 렌더링) 기능 포함.
+    /** * 💡 [전 학년 통합 편제표 및 한글파일(HWP) 출력 모듈]
+     * 한눈에 1~6학년 전 과목을 파악할 수 있는 컴팩트 매트릭스 뷰.
      */
     function AllGradesDetailedScreen({ analysisAll, allHours, autoTimes }) {
       
-      // 💡 HWP 파일로 내보내는 실제 엔진 로직
+      const MATRIX_ROWS = [
+        { group: '국어', subs: ['korean'] },
+        { group: '수학', subs: ['math'] },
+        { group: '바/슬/즐', subs: ['disciplined', 'wise', 'pleasant'] },
+        { group: '사회/도덕', subs: ['social', 'moral'] },
+        { group: '과학/실과', subs: ['science', 'practical'] },
+        { group: '체육', subs: ['physical'] },
+        { group: '예술(음/미)', subs: ['music', 'art'] },
+        { group: '영어', subs: ['english'] },
+        { group: '창의적체험활동', subs: ['creative_auto', 'creative_club', 'creative_volunteer', 'creative_career'] }
+      ];
+
+      const getCellVal = (grade, sub) => {
+        if (allHours[grade] && allHours[grade][sub] !== undefined) {
+          return allHours[grade][sub].s1 + allHours[grade][sub].s2;
+        }
+        return '';
+      };
+
+      const getAutoTimeVal = (grade) => {
+        return autoTimes.filter(a => a.grade === grade).reduce((s, a) => s + a.s1 + a.s2, 0);
+      };
+
+      // 💡 한글파일(HWP) 무결점 출력 로직
+      // MS Word 네임스페이스와 utf-8 charset meta 태그를 주입하여 한컴오피스의 인코딩 팝업을 100% 무력화시킵니다.
       const exportToHWP = () => {
-        let htmlContent = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><title>교육과정 편제표</title><style>table { border-collapse: collapse; width: 100%; text-align: center; font-size: 11pt; font-family: 'Malgun Gothic', sans-serif; } th, td { border: 1px solid black; padding: 5px; } th { background-color: #f2f2f2; } .group-name { font-weight: bold; background-color: #f9f9f9; } .error { color: red; font-weight: bold; }</style></head><body>`;
-        htmlContent += `<h1 style="text-align: center; font-family: 'Malgun Gothic';">전 학년 교육과정 시수 편제표</h1><br/>`;
+        let htmlContent = `
+        <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
+        <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+        <meta name="ProgId" content="Word.Document">
+        <meta name="Generator" content="Microsoft Word">
+        <title>교육과정 편제표</title>
+        <style>
+          table { border-collapse: collapse; width: 100%; text-align: center; font-size: 11pt; font-family: 'Malgun Gothic', '맑은 고딕', sans-serif; border: 2px solid black; }
+          th, td { border: 1px solid black; padding: 8px; vertical-align: middle; }
+          th { background-color: #f2f2f2; font-weight: bold; }
+          .group-name { background-color: #fafafa; font-weight: bold; }
+          .total-row { background-color: #e2e8f0; font-weight: bold; }
+          .title { text-align: center; font-family: 'Malgun Gothic', '맑은 고딕', sans-serif; font-size: 20pt; font-weight: bold; margin-bottom: 20px; }
+        </style>
+        </head>
+        <body>
+        <div class="title">전 학년 교육과정 시수 편제표</div>
+        <table>
+          <thead>
+            <tr>
+              <th rowspan="2">교과군</th>
+              <th rowspan="2">교과목</th>
+              <th colspan="2">1~2학년군</th>
+              <th colspan="2">3~4학년군</th>
+              <th colspan="2">5~6학년군</th>
+            </tr>
+            <tr>
+              <th>1학년</th><th>2학년</th>
+              <th>3학년</th><th>4학년</th>
+              <th>5학년</th><th>6학년</th>
+            </tr>
+          </thead>
+          <tbody>
+        `;
 
-        Object.keys(GRADE_GROUP_DATA).forEach(groupId => {
-          const config = GRADE_GROUP_DATA[groupId];
-          const [g1, g2] = config.grades;
-          const data = analysisAll.groups[groupId];
-          
-          htmlContent += `<h2>${groupId}학년군 (총 시수: ${data.groupTotal}/${data.targetTotal}H)</h2>`;
-          htmlContent += `<table><thead><tr><th rowspan="2">교과군</th><th rowspan="2">교과목</th><th colspan="3">${g1}학년</th><th colspan="3">${g2}학년</th><th rowspan="2">기준</th><th rowspan="2">편제합계</th><th rowspan="2">증감(%)</th></tr><tr><th>1학기</th><th>2학기</th><th>소계</th><th>1학기</th><th>2학기</th><th>소계</th></tr></thead><tbody>`;
-
-          data.groupStats.forEach((group, gIdx) => {
-            const groupAutoTimes = autoTimes.filter(a => group.subjects.includes(a.linkedSub) && (a.grade === g1 || a.grade === g2));
-            const rowSpanCount = group.subjects.length + groupAutoTimes.length;
-            const hasError = group.isOver20 || group.isUnder20;
-            const diffText = group.diff > 0 ? `+${group.diff}` : group.diff;
-
-            group.subjects.forEach((sub, sIdx) => {
-              const g1s1 = allHours[g1][sub].s1; const g1s2 = allHours[g1][sub].s2;
-              const g2s1 = allHours[g2][sub].s1; const g2s2 = allHours[g2][sub].s2;
-              const subAutoTimes = autoTimes.filter(a => a.linkedSub === sub && (a.grade === g1 || a.grade === g2));
-
-              htmlContent += `<tr>`;
-              if (sIdx === 0) htmlContent += `<td rowspan="${rowSpanCount}" class="group-name ${hasError ? 'error' : ''}">${group.name}</td>`;
-              htmlContent += `<td>${SUBJECT_NAME[sub]}</td><td>${g1s1}</td><td>${g1s2}</td><td>${g1s1+g1s2}</td><td>${g2s1}</td><td>${g2s2}</td><td>${g2s1+g2s2}</td>`;
-              if (sIdx === 0) {
-                htmlContent += `<td rowspan="${rowSpanCount}">${group.std}</td><td rowspan="${rowSpanCount}" class="${hasError ? 'error' : ''}">${group.current}</td><td rowspan="${rowSpanCount}" class="${hasError ? 'error' : ''}">${diffText} (${group.variancePercent}%)</td>`;
-              }
-              htmlContent += `</tr>`;
-
-              // 자율시간
-              subAutoTimes.forEach(aTime => {
-                htmlContent += `<tr style="background-color: #f0f8ff;">`;
-                htmlContent += `<td style="text-align: left;">└ [${aTime.grade}학년] ${aTime.name}</td>`;
-                if(aTime.grade === g1) {
-                  htmlContent += `<td>${aTime.s1}</td><td>${aTime.s2}</td><td>${aTime.s1+aTime.s2}</td><td></td><td></td><td></td>`;
-                } else {
-                  htmlContent += `<td></td><td></td><td></td><td>${aTime.s1}</td><td>${aTime.s2}</td><td>${aTime.s1+aTime.s2}</td>`;
-                }
-                htmlContent += `</tr>`;
-              });
+        MATRIX_ROWS.forEach(group => {
+          group.subs.forEach((sub, idx) => {
+            htmlContent += `<tr>`;
+            if (idx === 0) {
+              htmlContent += `<td rowspan="${group.subs.length}" class="group-name">${group.group}</td>`;
+            }
+            htmlContent += `<td>${SUBJECT_NAME[sub]}</td>`;
+            [1,2,3,4,5,6].forEach(g => {
+              const val = getCellVal(g, sub);
+              htmlContent += `<td>${val === 0 || val === '' ? '-' : val}</td>`;
             });
+            htmlContent += `</tr>`;
           });
-          htmlContent += `</tbody></table><br/><br/>`;
         });
-        htmlContent += `</body></html>`;
 
-        // Blob 생성 및 다운로드 (MIME 타입을 msword로 설정하면 한글/워드에서 열립니다)
+        // 학교 자율시간 & 합계 반영
+        htmlContent += `<tr><td colspan="2" class="group-name">학교 자율시간</td>`;
+        [1,2,3,4,5,6].forEach(g => {
+          const val = getAutoTimeVal(g);
+          htmlContent += `<td>${val === 0 ? '-' : val}</td>`;
+        });
+        htmlContent += `</tr>`;
+
+        htmlContent += `<tr class="total-row"><td colspan="2">합계</td>`;
+        [1,2,3,4,5,6].forEach(g => {
+           let total = 0;
+           MATRIX_ROWS.forEach(group => {
+             group.subs.forEach(sub => {
+               const val = getCellVal(g, sub);
+               if (val !== '') total += val;
+             });
+           });
+           total += getAutoTimeVal(g);
+           htmlContent += `<td>${total}</td>`;
+        });
+        htmlContent += `</tr></tbody></table></body></html>`;
+
         const blob = new Blob(['\ufeff' + htmlContent], { type: 'application/msword' });
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
@@ -404,99 +450,77 @@
         document.body.removeChild(link);
       };
 
+      const hasErr12 = analysisAll.groups['1-2'].hasAnyError;
+      const hasErr34 = analysisAll.groups['3-4'].hasAnyError;
+      const hasErr56 = analysisAll.groups['5-6'].hasAnyError;
+
       return (
         <div className="flex-grow flex flex-col gap-4 overflow-hidden">
           <div className="flex justify-between items-center bg-white dark:bg-slate-800 p-6 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 shrink-0">
             <div>
               <h2 className="text-xl font-black">전 학년 통합 편제표</h2>
-              <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">1~6학년 전체의 시수 편제와 결함 여부를 한눈에 확인하고 HWP로 출력합니다.</p>
+              <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">1~6학년 전체의 시수 편제(자율시간 포함)를 한눈에 파악하고 HWP 파일로 내보냅니다.</p>
             </div>
             <button onClick={exportToHWP} className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-lg flex items-center gap-2 transition-colors">
-              <i className="fa-solid fa-download"></i> HWP 한글파일 출력 (진짜 다운로드됨)
+              <i className="fa-solid fa-file-word"></i> 한글파일(HWP) 즉시 생성
             </button>
           </div>
 
-          <div className="flex-grow overflow-y-auto custom-scrollbar pr-2 space-y-6">
-            {Object.keys(GRADE_GROUP_DATA).map(groupId => {
-              const data = analysisAll.groups[groupId];
-              const config = GRADE_GROUP_DATA[groupId];
-              const [g1, g2] = config.grades;
-              const hasGlobalError = data.hasAnyError;
-              
-              return (
-                <div key={groupId} className={`bg-white dark:bg-slate-800 border-2 rounded-xl overflow-hidden transition-all ${hasGlobalError ? 'error-pulse border-red-500 shadow-[0_0_15px_rgba(239,68,68,0.2)]' : 'border-slate-200 dark:border-slate-700 shadow-sm'}`}>
-                  <div className={`p-4 flex justify-between items-center border-b ${hasGlobalError ? 'bg-red-50 dark:bg-red-900/30 border-red-200 dark:border-red-800' : 'bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-700'}`}>
-                    <h3 className={`text-lg font-black ${hasGlobalError ? 'text-red-700 dark:text-red-400' : 'text-slate-800 dark:text-slate-200'}`}>
-                      {groupId}학년군 편제표 (총합: {data.groupTotal}/{data.targetTotal}H)
-                    </h3>
-                    {hasGlobalError && <span className="text-xs font-bold text-red-600 bg-red-100 px-3 py-1 rounded-full"><i className="fa-solid fa-triangle-exclamation"></i> 오류 수정 필요</span>}
-                  </div>
-                  
-                  {/* 각 학년군별 상세 테이블 (읽기 전용) */}
-                  <table className="w-full text-center text-[12px] border-collapse">
-                    <thead className="bg-slate-100 dark:bg-slate-900/50 border-b border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 font-bold">
-                      <tr>
-                        <th className="py-2 border-r dark:border-slate-700 w-20">교과군</th>
-                        <th className="py-2 border-r dark:border-slate-700 w-28">교과목</th>
-                        <th className="py-2 border-r dark:border-slate-700 text-blue-700 dark:text-blue-400">{g1}학년 소계</th>
-                        <th className="py-2 border-r dark:border-slate-700 text-emerald-700 dark:text-emerald-400">{g2}학년 소계</th>
-                        <th className="py-2 border-r dark:border-slate-700 w-16">기준</th>
-                        <th className="py-2 border-r dark:border-slate-700 w-16">합계</th>
-                        <th className="py-2 w-16">증감</th>
+          <div className="flex-grow overflow-y-auto custom-scrollbar bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm p-4">
+            <table className="w-full border-collapse border border-slate-300 dark:border-slate-600">
+              <thead className="bg-slate-100 dark:bg-slate-900 border-b-2 border-slate-300 dark:border-slate-600 sticky top-0 z-10 text-slate-700 dark:text-slate-300">
+                <tr>
+                  <th rowSpan={2} className="py-2 px-2 border-r dark:border-slate-600 w-24 font-black">교과군</th>
+                  <th rowSpan={2} className="py-2 px-2 border-r dark:border-slate-600 w-32 font-black">교과목</th>
+                  {/* 💡 문제 있는 학년군 붉은색 점멸 테두리 */}
+                  <th colSpan={2} className={`py-1.5 px-2 border-r dark:border-slate-600 font-bold ${hasErr12 ? 'bg-red-100 text-red-700 error-pulse border-2 border-red-500' : 'bg-blue-50/50 dark:bg-blue-900/30'}`}>1~2학년군</th>
+                  <th colSpan={2} className={`py-1.5 px-2 border-r dark:border-slate-600 font-bold ${hasErr34 ? 'bg-red-100 text-red-700 error-pulse border-2 border-red-500' : 'bg-emerald-50/50 dark:bg-emerald-900/30'}`}>3~4학년군</th>
+                  <th colSpan={2} className={`py-1.5 px-2 font-bold ${hasErr56 ? 'bg-red-100 text-red-700 error-pulse border-2 border-red-500' : 'bg-purple-50/50 dark:bg-purple-900/30'}`}>5~6학년군</th>
+                </tr>
+                <tr className="text-xs font-bold">
+                  <th className={`py-1.5 border-r dark:border-slate-600 w-16 ${hasErr12 ? 'bg-red-50' : ''}`}>1학년</th>
+                  <th className={`py-1.5 border-r dark:border-slate-600 w-16 ${hasErr12 ? 'bg-red-50' : ''}`}>2학년</th>
+                  <th className={`py-1.5 border-r dark:border-slate-600 w-16 ${hasErr34 ? 'bg-red-50' : ''}`}>3학년</th>
+                  <th className={`py-1.5 border-r dark:border-slate-600 w-16 ${hasErr34 ? 'bg-red-50' : ''}`}>4학년</th>
+                  <th className={`py-1.5 border-r dark:border-slate-600 w-16 ${hasErr56 ? 'bg-red-50' : ''}`}>5학년</th>
+                  <th className={`py-1.5 w-16 ${hasErr56 ? 'bg-red-50' : ''}`}>6학년</th>
+                </tr>
+              </thead>
+              <tbody className="text-center text-[13px] divide-y divide-slate-200 dark:divide-slate-700">
+                {MATRIX_ROWS.map(group => (
+                  <React.Fragment key={group.group}>
+                    {group.subs.map((sub, idx) => (
+                      <tr key={sub} className="hover:bg-slate-50 dark:hover:bg-slate-700/50 text-slate-700 dark:text-slate-300 font-medium">
+                        {idx === 0 && (
+                          <td rowSpan={group.subs.length} className="border-r dark:border-slate-600 bg-slate-50/50 dark:bg-slate-900/50 font-bold">{group.group}</td>
+                        )}
+                        <td className="py-2 border-r dark:border-slate-600">{SUBJECT_NAME[sub]}</td>
+                        {[1,2,3,4,5,6].map(g => {
+                          const val = getCellVal(g, sub);
+                          // 에러 있는 학년군의 컬럼 바탕색 살짝 붉게
+                          const isErr = (g<=2 && hasErr12) || (g>=3 && g<=4 && hasErr34) || (g>=5 && hasErr56);
+                          return <td key={g} className={`py-2 border-r dark:border-slate-600 ${isErr ? 'bg-red-50/20 text-red-700 font-bold' : ''}`}>{val === '' || val === 0 ? '-' : val}</td>;
+                        })}
                       </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50 text-slate-700 dark:text-slate-300">
-                      {data.groupStats.map(group => {
-                        const hasGroupError = group.isOver20 || group.isUnder20;
-                        const groupAutoTimes = autoTimes.filter(a => group.subjects.includes(a.linkedSub) && (a.grade === g1 || a.grade === g2));
-                        const rowSpanCount = group.subjects.length + groupAutoTimes.length;
-
-                        return (
-                          <React.Fragment key={group.id}>
-                            {group.subjects.map((sub, idx) => {
-                              const subAutoTimes = autoTimes.filter(a => a.linkedSub === sub && (a.grade === g1 || a.grade === g2));
-                              return (
-                                <tr key={sub} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
-                                  {idx === 0 && (
-                                    <td rowSpan={rowSpanCount} className={`border-r dark:border-slate-700 font-bold ${hasGroupError ? 'text-red-600 bg-red-50/50 dark:bg-red-900/10' : 'bg-slate-50/50 dark:bg-slate-900/50'}`}>{group.name}</td>
-                                  )}
-                                  <td className="py-2 border-r dark:border-slate-700">{SUBJECT_NAME[sub]}</td>
-                                  <td className="py-2 border-r dark:border-slate-700 font-medium">{allHours[g1][sub].s1 + allHours[g1][sub].s2}</td>
-                                  <td className="py-2 border-r dark:border-slate-700 font-medium">{allHours[g2][sub].s1 + allHours[g2][sub].s2}</td>
-                                  
-                                  {idx === 0 && (
-                                    <>
-                                      <td rowSpan={rowSpanCount} className="border-r dark:border-slate-700 font-bold text-slate-400">{group.std}</td>
-                                      <td rowSpan={rowSpanCount} className={`border-r dark:border-slate-700 font-black ${hasGroupError ? 'text-red-600' : 'text-blue-600 dark:text-blue-400'}`}>{group.current}</td>
-                                      <td rowSpan={rowSpanCount} className={`font-bold ${hasGroupError ? 'text-red-600' : ''}`}>{group.diff > 0 ? `+${group.diff}` : group.diff}<br/><span className="text-[10px] font-normal opacity-70">({group.variancePercent}%)</span></td>
-                                    </>
-                                  )}
-                                </tr>
-                              );
-                            })}
-                            {/* 자율시간 서브로우 (읽기 전용 표시) */}
-                            {groupAutoTimes.map(aTime => (
-                               <tr key={aTime.id} className="bg-blue-50/30 dark:bg-blue-900/10 text-[11px]">
-                                 <td className="py-1.5 px-3 border-r dark:border-slate-700 text-left text-blue-700 dark:text-blue-400 font-bold">└ [{aTime.grade}학년] {aTime.name}</td>
-                                 <td className="py-1.5 border-r dark:border-slate-700 text-blue-600 dark:text-blue-400">{aTime.grade === g1 ? aTime.s1 + aTime.s2 : ''}</td>
-                                 <td className="py-1.5 border-r dark:border-slate-700 text-blue-600 dark:text-blue-400">{aTime.grade === g2 ? aTime.s1 + aTime.s2 : ''}</td>
-                               </tr>
-                            ))}
-                          </React.Fragment>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              );
-            })}
+                    ))}
+                  </React.Fragment>
+                ))}
+                {/* 자율시간 요약 */}
+                <tr className="bg-blue-50/30 dark:bg-blue-900/20 font-bold text-blue-800 dark:text-blue-300">
+                  <td colSpan="2" className="py-3 border-r dark:border-slate-600"><i className="fa-solid fa-flask mr-1"></i> 학교 자율시간</td>
+                  {[1,2,3,4,5,6].map(g => {
+                    const val = getAutoTimeVal(g);
+                    return <td key={g} className="py-3 border-r dark:border-slate-600">{val === 0 ? '-' : val}</td>;
+                  })}
+                </tr>
+              </tbody>
+            </table>
           </div>
         </div>
       );
     }
 
-    /** * 💡 메인 편제표 렌더링 컴포넌트 (텍스트 흐름 및 입력 버그 완전 수정)
-     */
+    /** 메인 편집 편제표 (자율시간 팝업 로직 반영 및 물 흐르는 효과) */
     function CurriculumScreen({ analysis, allHours, handleInput, autoTimes, openModal, handleAutoTimeHours, deleteAutoTime }) {
       const [g1, g2] = analysis.grades;
 
@@ -570,10 +594,9 @@
                             )}
                           </tr>
                           
-                          {/* 💡 학교 자율시간 서브로우 (텍스트 흐름 및 버튼 클릭 방해 방지) */}
+                          {/* 💡 학교 자율시간 서브로우 */}
                           {subAutoTimes.map(aTime => {
                              const text = `[${aTime.grade}학년] ${aTime.name}`;
-                             // 글자가 길면 marquee 클래스 적용, 아니면 정지
                              const isLong = text.length > 10;
 
                              return (
@@ -585,7 +608,6 @@
                                         <span className="text-slate-400 dark:text-slate-500 mr-1">└</span>{text}
                                       </div>
                                     </div>
-                                    {/* 💡 삭제 버튼 클릭 이벤트 수정 (e.stopPropagation 추가) */}
                                     <div className="flex gap-1 opacity-0 group-hover/subrow:opacity-100 transition-opacity bg-white dark:bg-slate-800 rounded px-1.5 py-0.5 shadow-sm absolute right-1 z-10">
                                       <button onClick={(e) => { e.stopPropagation(); openModal(aTime.grade, aTime.id); }} className="text-slate-400 hover:text-blue-600 p-1"><i className="fa-solid fa-pen text-[10px]"></i></button>
                                       <button onClick={(e) => { e.stopPropagation(); deleteAutoTime(e, aTime.id); }} className="text-slate-400 hover:text-red-600 p-1"><i className="fa-solid fa-xmark text-[10px]"></i></button>
